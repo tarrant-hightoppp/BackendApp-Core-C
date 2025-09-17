@@ -7,7 +7,7 @@ from io import BytesIO
 class TemplateType(str, Enum):
     RIVAL = "RIVAL"
     AJUR = "AJUR"
-    MICROINVEST = "MIKROINVEST"
+    MICROINVEST = "MICROINVEST"  # Changed from MIKROINVEST for consistency
     BUSINESS_NAVIGATOR = "BusinessNavigator"
     UNIVERSUM = "UNIVERSUM"
 

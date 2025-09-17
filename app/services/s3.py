@@ -67,9 +67,51 @@ class S3Service:
             # If file_content is bytes, convert to file-like object
             if isinstance(file_content, bytes):
                 file_content = io.BytesIO(file_content)
+            
+            # Ensure parent directory exists by checking for object_name path components
+            try:
+                # If object_name contains directories (e.g., account_reports/debit/file.xlsx)
+                if '/' in object_name:
+                    # Get the directory part (e.g., account_reports/debit/)
+                    dir_path = '/'.join(object_name.split('/')[:-1]) + '/'
+                    
+                    # Check if directory exists by listing objects with this prefix
+                    response = self.s3_client.list_objects_v2(
+                        Bucket=self.bucket_name,
+                        Prefix=dir_path,
+                        MaxKeys=1
+                    )
+                    
+                    # If directory doesn't exist, create it
+                    if 'Contents' not in response or len(response['Contents']) == 0:
+                        logger.info(f"Creating directory in S3: {dir_path}")
+                        self.s3_client.put_object(
+                            Bucket=self.bucket_name,
+                            Key=dir_path
+                        )
+            except Exception as e:
+                # Log the error but continue with the upload
+                logger.warning(f"Error checking/creating directory for {object_name}: {e}")
                 
-            self.s3_client.upload_fileobj(file_content, self.bucket_name, object_name)
-            return True, f"File {object_name} uploaded successfully"
+            # Upload the file
+            try:
+                # print(f"[DEBUG] Uploading to S3: bucket={self.bucket_name}, key={object_name}")
+                self.s3_client.upload_fileobj(file_content, self.bucket_name, object_name)
+                logger.info(f"Successfully uploaded file to S3: {object_name}")
+                
+                # Verify the file was uploaded by attempting to get its metadata
+                try:
+                    self.s3_client.head_object(Bucket=self.bucket_name, Key=object_name)
+                    # print(f"[DEBUG] Verified file exists in S3: {object_name}")
+                except Exception as e:
+                    print(f"[WARNING] File upload succeeded but verification failed: {object_name}, error: {str(e)}")
+                
+                return True, f"File {object_name} uploaded successfully"
+            except Exception as e:
+                print(f"[ERROR] Exception during S3 upload of {object_name}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                return False, f"Exception during upload: {str(e)}"
         except ClientError as e:
             logger.error(f"Error uploading to S3: {e}")
             return False, f"Error uploading file: {str(e)}"

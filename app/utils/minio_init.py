@@ -11,8 +11,14 @@ RETRY_DELAY = 2  # seconds
 
 def init_minio_bucket():
     """
-    Initialize the MinIO bucket if it doesn't exist.
+    Initialize the MinIO bucket and required subdirectories if they don't exist.
     This should be called when the application starts.
+    
+    Ensures the following structure:
+    - accounting-files (bucket)
+      - account_reports/
+        - debit/
+        - credit/
     """
     if not settings.USE_S3:
         logger.info("S3 storage is disabled, skipping MinIO bucket initialization")
@@ -43,6 +49,19 @@ def init_minio_bucket():
                     
                     # Verify the bucket was created
                     s3_client.head_bucket(Bucket=settings.S3_BUCKET)
+                    
+                    # Create required subdirectories by creating empty objects with directory keys
+                    # For MinIO/S3, directories are just objects with a trailing slash
+                    logger.info("Creating required subdirectories in MinIO bucket")
+                    
+                    # Create account_reports directory structure
+                    s3_client.put_object(Bucket=settings.S3_BUCKET, Key="account_reports/")
+                    s3_client.put_object(Bucket=settings.S3_BUCKET, Key="account_reports/debit/")
+                    s3_client.put_object(Bucket=settings.S3_BUCKET, Key="account_reports/credit/")
+                    
+                    logger.info("MinIO bucket directory structure created successfully")
+                    print("✅ MinIO subdirectories created: account_reports/debit/ and account_reports/credit/")
+                    
                     return True
                 else:
                     # Re-raise other errors

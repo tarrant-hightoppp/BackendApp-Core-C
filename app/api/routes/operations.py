@@ -6,6 +6,8 @@ from sqlalchemy import and_, or_
 
 from app.app import models, schemas
 from app.api import deps
+from app.services.accounting_operation_processor import AccountingOperationProcessor
+from typing import Dict
 
 router = APIRouter(tags=["operations"])
 
@@ -210,3 +212,103 @@ def export_operations(
             "file_id": file_id
         }
     }
+
+
+@router.post("/process-import/{import_uuid}", response_model=Dict[str, Any],
+           summary="Process import operations and generate account reports",
+           description="""
+           Process all operations for a specific import and generate account-specific Excel files.
+           
+           ## Account Reporting Feature
+           
+           This endpoint implements the account reporting feature that:
+           
+           1. Groups operations by account number (separate processing for debit and credit accounts)
+           2. Applies filtering based on the 80% rule:
+              - If an account has ≤ 30 operations: includes ALL operations
+              - If an account has > 30 operations: includes operations that constitute 80% of the total amount
+                (sorted by amount in descending order)
+           3. Generates XLSX files for each account with naming pattern: `{account}_{import_uuid}_{timestamp}.xlsx`
+           4. Uploads files to S3 storage for retrieval
+           
+           ## Response Format
+           
+           The response includes detailed statistics about the processed accounts and the generated files,
+           including file names, S3 storage paths, and counts of operations processed.
+           """)
+def process_import(
+    *,
+    db: Session = Depends(deps.get_db),
+    import_uuid: str
+) -> Any:
+    """
+    Process all operations for a specific import and generate account-specific Excel files.
+    
+    ## Workflow
+    
+    This endpoint:
+    1. Finds all operations related to the specified import UUID
+    2. Groups operations by account (separately for debit and credit)
+    3. Applies the 80% filtering rule:
+       - For accounts with ≤30 operations: includes ALL operations
+       - For accounts with >30 operations: includes operations constituting 80% of total amount
+         (sorted by largest amount first)
+    4. Generates account-specific Excel files with all relevant operation details
+    5. Uploads files to S3 with naming pattern: {account}_{import_uuid}_{timestamp}.xlsx
+    
+    ## Example Response
+    
+    ```json
+    {
+        "success": true,
+        "debit_accounts_processed": 5,
+        "credit_accounts_processed": 7,
+        "debit_files": [
+            {
+                "account": "122",
+                "total_operations": 45,
+                "filtered_operations": 28,
+                "s3_key": "account_reports/debit/122_abc123_20250917041532.xlsx",
+                "file_name": "122_abc123_20250917041532.xlsx"
+            },
+            ...
+        ],
+        "credit_files": [
+            {
+                "account": "401",
+                "total_operations": 22,
+                "filtered_operations": 22,
+                "s3_key": "account_reports/credit/401_abc123_20250917041532.xlsx",
+                "file_name": "401_abc123_20250917041532.xlsx"
+            },
+            ...
+        ],
+        "import_uuid": "abc123",
+        "total_operations": 156
+    }
+    ```
+    
+    Returns detailed statistics about the processed accounts and generated files.
+    """
+    # Check if import exists
+    import_exists = db.query(models.UploadedFile).filter(
+        models.UploadedFile.import_uuid == import_uuid
+    ).first()
+    
+    if not import_exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Import with UUID {import_uuid} not found"
+        )
+    
+    # Process the import
+    processor = AccountingOperationProcessor(db)
+    result = processor.process_import(import_uuid)
+    
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=result["message"]
+        )
+    
+    return result

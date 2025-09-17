@@ -29,6 +29,7 @@ class AccountingOperation(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     template_type = Column(String, nullable=False)  # Which template this came from
     raw_data = Column(JSONB)  # Store the raw data from the Excel for reference
+    import_uuid = Column(String, nullable=False)  # UUID of the import batch
     
     # Relationships
     file = relationship("UploadedFile", back_populates="operations")

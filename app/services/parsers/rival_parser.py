@@ -9,7 +9,7 @@ from app.services.parsers.base_parser import BaseExcelParser
 class RivalParser(BaseExcelParser):
     """Parser for Rival Excel format"""
     
-    def parse(self, file_path: str, file_id: int) -> List[Dict[str, Any]]:
+    def parse(self, file_path: str, file_id: int, import_uuid: str = None) -> List[Dict[str, Any]]:
         """
         Parse the Rival Excel file and extract accounting operations
         
@@ -26,6 +26,7 @@ class RivalParser(BaseExcelParser):
         Args:
             file_path: Path to the Excel file
             file_id: ID of the uploaded file in the database
+            import_uuid: UUID of the import batch this file belongs to
             
         Returns:
             List of dictionaries containing accounting operations data
@@ -75,7 +76,8 @@ class RivalParser(BaseExcelParser):
                     "description": description,
                     "partner_name": partner_name,
                     "template_type": "rival",
-                    "raw_data": row.to_dict()
+                    "raw_data": row.to_dict(),
+                    "import_uuid": import_uuid
                 }
                 
                 operations.append(operation)
@@ -86,13 +88,14 @@ class RivalParser(BaseExcelParser):
             print(f"Error parsing Rival Excel file: {e}")
             return []
     
-    def parse_memory(self, file_obj: BytesIO, file_id: int) -> List[Dict[str, Any]]:
+    def parse_memory(self, file_obj: BytesIO, file_id: int, import_uuid: str = None) -> List[Dict[str, Any]]:
         """
         Parse the Rival Excel file from memory and extract accounting operations
         
         Args:
             file_obj: BytesIO object containing the Excel file
             file_id: ID of the uploaded file in the database
+            import_uuid: UUID of the import batch this file belongs to
             
         Returns:
             List of dictionaries containing accounting operations data
@@ -145,7 +148,8 @@ class RivalParser(BaseExcelParser):
                     "description": description,
                     "partner_name": partner_name,
                     "template_type": "rival",
-                    "raw_data": row.to_dict()
+                    "raw_data": row.to_dict(),
+                    "import_uuid": import_uuid
                 }
                 
                 operations.append(operation)

@@ -295,6 +295,65 @@ Gets summary statistics about accounting operations.
 }
 ```
 
+### Process Import for Account Reporting
+
+```
+POST /api/operations/process-import/{import_uuid}
+```
+
+Processes all operations from a specific import and generates account-specific Excel files. This endpoint implements the account reporting feature that divides operations by account numbers and creates separate Excel files.
+
+**Required Headers:**
+- Authorization: Bearer {token}
+
+**Path Parameters:**
+- import_uuid (string, required): UUID of the import to process
+
+**Account Reporting Logic:**
+1. Groups operations by account number (separate processing for debit and credit accounts)
+2. For each account:
+   - If the account has ≤30 operations: includes ALL operations
+   - If the account has >30 operations: includes operations that constitute 80% of the total amount
+     (sorted by amount in descending order - largest transactions first)
+3. Generates XLSX files with naming pattern: `{account}_{import_uuid}_{timestamp}.xlsx`
+4. Uploads files to S3 storage for retrieval
+
+**Response:**
+```json
+{
+  "success": true,
+  "debit_accounts_processed": 5,
+  "credit_accounts_processed": 7,
+  "debit_files": [
+    {
+      "account": "122",
+      "total_operations": 45,
+      "filtered_operations": 28,
+      "s3_key": "account_reports/debit/122_abc123_20250917041532.xlsx",
+      "file_name": "122_abc123_20250917041532.xlsx"
+    },
+    {
+      "account": "232",
+      "total_operations": 12,
+      "filtered_operations": 12,
+      "s3_key": "account_reports/debit/232_abc123_20250917041533.xlsx",
+      "file_name": "232_abc123_20250917041533.xlsx"
+    }
+  ],
+  "credit_files": [
+    {
+      "account": "401",
+      "total_operations": 22,
+      "filtered_operations": 22,
+      "s3_key": "account_reports/credit/401_abc123_20250917041534.xlsx",
+      "file_name": "401_abc123_20250917041534.xlsx"
+    }
+  ],
+  "import_uuid": "abc123",
+  "total_operations": 156
+}
+```
+
 ## Using the API with Swagger UI
 
 FastAPI automatically generates interactive API documentation using Swagger UI. You can access it at:

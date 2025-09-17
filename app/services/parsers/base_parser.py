@@ -9,13 +9,14 @@ class BaseExcelParser(ABC):
     """Base class for all Excel parsers"""
     
     @abstractmethod
-    def parse(self, file_path: str, file_id: int) -> List[Dict[str, Any]]:
+    def parse(self, file_path: str, file_id: int, import_uuid: str = None) -> List[Dict[str, Any]]:
         """
         Parse the Excel file from disk and extract accounting operations
         
         Args:
             file_path: Path to the Excel file
             file_id: ID of the uploaded file in the database
+            import_uuid: UUID of the import batch this file belongs to
             
         Returns:
             List of dictionaries containing accounting operations data
@@ -23,13 +24,14 @@ class BaseExcelParser(ABC):
         pass
     
     @abstractmethod
-    def parse_memory(self, file_obj: BytesIO, file_id: int) -> List[Dict[str, Any]]:
+    def parse_memory(self, file_obj: BytesIO, file_id: int, import_uuid: str = None) -> List[Dict[str, Any]]:
         """
         Parse the Excel file from memory and extract accounting operations
         
         Args:
             file_obj: BytesIO object containing the Excel file
             file_id: ID of the uploaded file in the database
+            import_uuid: UUID of the import batch this file belongs to
             
         Returns:
             List of dictionaries containing accounting operations data
@@ -92,18 +94,66 @@ class BaseExcelParser(ABC):
             Cleaned float value or None if conversion fails
         """
         if pd.isna(value):
+            # print(f"[DEBUG] clean_numeric: Skipping NaN value")
             return None
             
         try:
             if isinstance(value, str):
+                # print(f"[DEBUG] clean_numeric: Processing string value: '{value}'")
+                # Check if the string has patterns that indicate it's not a number
+                # Account numbers like "602/4" or descriptions like "1 - Вътрешен оборот"
+                # should not be treated as numbers
+                if '/' in value:
+                    # print(f"[DEBUG] clean_numeric: Value contains slash: '{value}'")
+                    # Check if this is really a numeric value with a slash
+                    parts = value.split('/')
+                    if len(parts) == 2 and all(p.strip().isdigit() for p in parts):
+                        # This is likely a fraction, continue processing
+                        # print(f"[DEBUG] clean_numeric: Value appears to be a fraction, continuing")
+                        pass
+                    else:
+                        # This contains a slash and is not a simple fraction
+                        # print(f"[DEBUG] clean_numeric: Value appears to be an account number, returning None")
+                        return None
+                
+                if '-' in value:
+                    # print(f"[DEBUG] clean_numeric: Value contains dash: '{value}'")
+                    # Check if this is just a negative number or something else
+                    if not value.replace('-', '').replace('.', '').replace(',', '').isdigit():
+                        # This contains a dash and is not simply a negative number
+                        # print(f"[DEBUG] clean_numeric: Value appears to be a description with dash, returning None")
+                        return None
+                
+                if not any(c.isdigit() for c in value):
+                    # print(f"[DEBUG] clean_numeric: Value contains no digits, returning None")
+                    return None
+                
                 # Remove currency symbols and thousand separators
+                # print(f"[DEBUG] clean_numeric: Cleaning string: '{value}'")
                 cleaned = value.replace('$', '').replace('€', '').replace(' ', '')
                 cleaned = cleaned.replace(',', '.').replace(' ', '')
-                return float(cleaned)
+                # print(f"[DEBUG] clean_numeric: After cleaning: '{cleaned}'")
+                
+                # Final check - if the result doesn't look like a number, return None
+                if not cleaned.replace('.', '').replace('-', '').isdigit():
+                    # Check if it's a valid float representation with one decimal point
+                    parts = cleaned.split('.')
+                    if len(parts) > 2 or not all(p.replace('-', '').isdigit() for p in parts):
+                        # print(f"[DEBUG] clean_numeric: Cleaned value is not a valid number, returning None")
+                        return None
+                
+                result = float(cleaned)
+                # print(f"[DEBUG] clean_numeric: Successfully converted to float: {result}")
+                return result
             else:
-                return float(value)
+                # print(f"[DEBUG] clean_numeric: Processing non-string value: {type(value).__name__}: {value}")
+                result = float(value)
+                # print(f"[DEBUG] clean_numeric: Successfully converted to float: {result}")
+                return result
         except Exception as e:
-            print(f"Error converting numeric value {value}: {e}")
+            print(f"[ERROR] Error converting numeric value '{value}' of type {type(value).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def clean_string(self, value: Any) -> Optional[str]:

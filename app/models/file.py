@@ -1,12 +1,13 @@
 from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-
+import uuid
 from app.db.base_class import Base
 
 
 class UploadedFile(Base):
     id = Column(Integer, primary_key=True, index=True)
+    import_uuid = Column(String, nullable=False)
     filename = Column(String, nullable=False)
     template_type = Column(String, nullable=False)
     upload_date = Column(DateTime(timezone=True), server_default=func.now())
