@@ -139,6 +139,17 @@ class MicroinvestParser(BaseExcelParser):
                 description = self._get_value(row, description_col) if description_col else None
                 partner_name = self._get_value(row, partner_col) if partner_col else None
                 
+                # Look for sequence number in row (typically first column)
+                sequence_number = None
+                # Try to find a sequence number by checking the first few columns
+                for i in range(3):  # Check first 3 columns
+                    if i < len(row) and not pd.isna(row.iloc[i]) and isinstance(row.iloc[i], (int, float)):
+                        try:
+                            sequence_number = int(row.iloc[i])
+                            break
+                        except (ValueError, TypeError):
+                            pass
+                
                 # Create operation dictionary
                 operation = {
                     "file_id": file_id,
@@ -152,7 +163,13 @@ class MicroinvestParser(BaseExcelParser):
                     "partner_name": partner_name,
                     "template_type": "MICROINVEST",
                     "raw_data": self._make_json_serializable(row),
-                    "import_uuid": import_uuid
+                    "import_uuid": import_uuid,
+                    # New audit fields with default values
+                    "sequence_number": sequence_number,
+                    "verified_amount": None,
+                    "deviation_amount": None,
+                    "control_action": None,
+                    "deviation_note": None
                 }
                 
                 operations.append(operation)

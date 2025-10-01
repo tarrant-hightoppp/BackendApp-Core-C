@@ -64,6 +64,14 @@ class RivalParser(BaseExcelParser):
                 if not operation_date or not amount:
                     continue
                 
+                # Try to get sequence number if available
+                sequence_number = None
+                if len(row) > 0 and isinstance(row.iloc[0], (int, float)) and not pd.isna(row.iloc[0]):
+                    try:
+                        sequence_number = int(row.iloc[0])
+                    except (ValueError, TypeError):
+                        pass
+                
                 # Create operation dictionary
                 operation = {
                     "file_id": file_id,
@@ -77,7 +85,13 @@ class RivalParser(BaseExcelParser):
                     "partner_name": partner_name,
                     "template_type": "rival",
                     "raw_data": row.to_dict(),
-                    "import_uuid": import_uuid
+                    "import_uuid": import_uuid,
+                    # New audit fields with default values
+                    "sequence_number": sequence_number,
+                    "verified_amount": None,
+                    "deviation_amount": None,
+                    "control_action": None,
+                    "deviation_note": None
                 }
                 
                 operations.append(operation)
@@ -136,6 +150,14 @@ class RivalParser(BaseExcelParser):
                 if not operation_date or not amount:
                     continue
                 
+                # Try to get sequence number if available
+                sequence_number = None
+                if len(row) > 0 and isinstance(row.iloc[0], (int, float)) and not pd.isna(row.iloc[0]):
+                    try:
+                        sequence_number = int(row.iloc[0])
+                    except (ValueError, TypeError):
+                        pass
+                
                 # Create operation dictionary
                 operation = {
                     "file_id": file_id,
@@ -149,7 +171,13 @@ class RivalParser(BaseExcelParser):
                     "partner_name": partner_name,
                     "template_type": "rival",
                     "raw_data": row.to_dict(),
-                    "import_uuid": import_uuid
+                    "import_uuid": import_uuid,
+                    # New audit fields with default values
+                    "sequence_number": sequence_number,
+                    "verified_amount": None,
+                    "deviation_amount": None,
+                    "control_action": None,
+                    "deviation_note": None
                 }
                 
                 operations.append(operation)

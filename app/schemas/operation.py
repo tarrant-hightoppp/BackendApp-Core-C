@@ -17,6 +17,12 @@ class OperationBase(BaseModel):
     analytical_debit: Optional[str] = None
     analytical_credit: Optional[str] = None
     account_name: Optional[str] = None
+    # Audit-related fields
+    sequence_number: Optional[int] = None  # № по ред
+    verified_amount: Optional[float] = None  # Установена сума при одита
+    deviation_amount: Optional[float] = None  # Отклонение
+    control_action: Optional[str] = None  # Установено контролно действие при одита
+    deviation_note: Optional[str] = None  # Отклонение (second deviation field)
 
 
 # Properties to receive via API on creation
@@ -64,3 +70,8 @@ class OperationFilter(BaseModel):
     max_amount: Optional[float] = None
     description_contains: Optional[str] = None
     template_type: Optional[str] = None
+    # New audit filter fields
+    sequence_number: Optional[int] = None
+    has_verified_amount: Optional[bool] = None
+    has_deviation: Optional[bool] = None
+    has_control_action: Optional[bool] = None

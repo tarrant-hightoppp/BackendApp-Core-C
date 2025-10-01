@@ -14,6 +14,22 @@ from app.services.s3 import S3Service
 class AccountingOperationProcessor:
     """Service for processing accounting operations and generating account-specific files"""
     
+    # Column name constants to ensure consistency
+    COL_SEQ_NUM = "№ по ред"
+    COL_DOC_TYPE = "Вид документ"
+    COL_DOC_NUM = "Документ №"
+    COL_DATE = "Дата"
+    COL_DEBIT_ACC = "Дт с/ка"
+    COL_DEBIT_ANALYTICAL = "Аналитична сметка/Партньор (Дт)"
+    COL_CREDIT_ACC = "Кт с/ка"
+    COL_CREDIT_ANALYTICAL = "Аналитична сметка/Партньор (Кт)"
+    COL_AMOUNT = "Сума"
+    COL_DESCRIPTION = "Обяснение/Обоснование"
+    COL_VERIFIED_AMOUNT = "Установена сума при одита"
+    COL_DEVIATION = "Отклонение"
+    COL_CONTROL_ACTION = "Установено контролно действие при одита"
+    COL_DEVIATION_NOTE = "Отклонение (забележка)"
+    
     def __init__(self, db: Session):
         self.db = db
         self.s3_service = S3Service()
@@ -119,10 +135,14 @@ class AccountingOperationProcessor:
             # Create a timestamp for the filename
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             
-            # Format: DEBIT/CREDIT-account__importUUID__timestamp.xlsx
-            # Replace any forward slashes in account numbers with underscores to avoid creating nested directories in S3
-            safe_account = account.replace('/', '_')
-            file_name = f"{account_type.upper()}-{safe_account}__{import_uuid}__{timestamp}.xlsx"
+            # Extract the main account number (before the slash if present)
+            main_account = account.split('/')[0] if '/' in account else account
+            
+            # Format: DEBIT/CREDIT-mainaccount__timestamp.xlsx
+            # Replace any remaining forward slashes with underscores to avoid creating nested directories in S3
+            safe_account = main_account.replace('/', '_')
+            # Using import_uuid at the beginning of the filename for easy identification
+            file_name = f"{import_uuid}-{account_type.upper()}-{safe_account}__{timestamp}.xlsx"
             
             # Generate and upload the account-specific Excel file
             # print(f"[DEBUG] Generating Excel file for {account_type} account {account} with {len(filtered_operations)} operations")
@@ -140,17 +160,21 @@ class AccountingOperationProcessor:
         
         return results
     
-    def _group_by_account(self, operations: List[AccountingOperation], 
+    def _group_by_account(self, operations: List[AccountingOperation],
                           account_type: str) -> Dict[str, List[AccountingOperation]]:
         """
         Group operations by account number
+        
+        For accounts with format like "300/1", "300/2", they are grouped by the
+        number before the slash. This way all subaccounts of the same main account
+        are processed together.
         
         Args:
             operations: List of operations to group
             account_type: "debit" or "credit" to determine which account field to use
             
         Returns:
-            Dictionary with account numbers as keys and lists of operations as values
+            Dictionary with main account numbers as keys and lists of operations as values
         """
         account_groups = {}
         
@@ -160,10 +184,13 @@ class AccountingOperationProcessor:
             if not account:
                 continue
                 
-            if account not in account_groups:
-                account_groups[account] = []
+            # Extract the main account number (before the slash if present)
+            main_account = account.split('/')[0] if '/' in account else account
                 
-            account_groups[account].append(operation)
+            if main_account not in account_groups:
+                account_groups[main_account] = []
+                
+            account_groups[main_account].append(operation)
             
         return account_groups
     
@@ -275,38 +302,66 @@ class AccountingOperationProcessor:
             # Convert operations to dataframe
             operation_data = []
             
+            # Counter for sequence number if not already assigned
+            seq_count = 1
+            
             for op in operations:
+                # Use existing sequence_number or assign a new one
+                seq_number = op.sequence_number if op.sequence_number is not None else seq_count
+                
                 operation_data.append({
-                    "operation_date": op.operation_date,
-                    "document_type": op.document_type,
-                    "document_number": op.document_number,
-                    "debit_account": op.debit_account,
-                    "credit_account": op.credit_account,
-                    "amount": float(op.amount),
-                    "description": op.description,
+                    self.COL_SEQ_NUM: seq_number,
+                    self.COL_DOC_TYPE: op.document_type,
+                    self.COL_DOC_NUM: op.document_number,
+                    self.COL_DATE: op.operation_date,
+                    self.COL_DEBIT_ACC: op.debit_account,
+                    self.COL_DEBIT_ANALYTICAL: op.analytical_debit,
+                    self.COL_CREDIT_ACC: op.credit_account,
+                    self.COL_CREDIT_ANALYTICAL: op.analytical_credit,
+                    self.COL_AMOUNT: float(op.amount),
+                    self.COL_DESCRIPTION: op.description,
+                    self.COL_VERIFIED_AMOUNT: float(op.verified_amount) if op.verified_amount is not None else None,
+                    self.COL_DEVIATION: float(op.deviation_amount) if op.deviation_amount is not None else None,
+                    self.COL_CONTROL_ACTION: op.control_action,
+                    self.COL_DEVIATION_NOTE: op.deviation_note,
+                    # Keep original fields for reference/compatibility
                     "partner_name": op.partner_name,
-                    "analytical_debit": op.analytical_debit,
-                    "analytical_credit": op.analytical_credit,
                     "account_name": op.account_name,
                     "import_uuid": op.import_uuid
                 })
                 
-            # Create DataFrame and sort it appropriately
+                if op.sequence_number is None:
+                    seq_count += 1
+                
+            # Create DataFrame
             df = pd.DataFrame(operation_data)
             
-            # For account-specific reports, we want to sort by amount (descending)
-            # to show the most significant operations first
-            df = df.sort_values(by="amount", ascending=False)
+            # Add robust sorting with fallback to prevent KeyErrors when columns don't exist
+            try:
+                # For account-specific reports, we want to sort first by account number
+                # (to group subaccounts together), then by amount (descending)
+                if account_type == "debit":
+                    df = df.sort_values(by=[self.COL_DEBIT_ACC, self.COL_AMOUNT], ascending=[True, False])
+                else:  # credit
+                    df = df.sort_values(by=[self.COL_CREDIT_ACC, self.COL_AMOUNT], ascending=[True, False])
+            except KeyError as e:
+                print(f"[WARNING] Sorting error: Column {e} not found. Falling back to basic sorting.")
+                try:
+                    # Try sorting by just the amount as fallback
+                    df = df.sort_values(by=self.COL_AMOUNT, ascending=False)
+                except KeyError:
+                    # If even that fails, log it but continue without sorting
+                    print("[WARNING] Fallback sorting failed as well. Continuing without sorting.")
             
             # Create Excel file in memory
             excel_buffer = io.BytesIO()
             df.to_excel(excel_buffer, index=False)
             excel_buffer.seek(0)
             
-            # Upload to S3 with the standard path structure: /exports/Debit or /exports/Credits
-            # This ensures files go to the correct directories with proper capitalization
-            directory = "Debit" if account_type.lower() == "debit" else "Credits"
-            s3_key = f"exports/{directory}/{file_name}"
+            # Upload to S3 with the import-specific folder structure:
+            # /account_reports/{import_uuid}/sorted_by_debit or /account_reports/{import_uuid}/sorted_by_credit
+            directory = "sorted_by_debit" if account_type.lower() == "debit" else "sorted_by_credit"
+            s3_key = f"account_reports/{import_uuid}/{directory}/{file_name}"
             # print(f"[DEBUG] Uploading Excel file to S3: {s3_key}")
             success, message = self.s3_service.upload_file(excel_buffer, s3_key)
             # print(f"[DEBUG] S3 upload result: success={success}, message={message}")

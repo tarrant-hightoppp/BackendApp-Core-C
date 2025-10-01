@@ -273,6 +273,16 @@ class AjurParser(BaseExcelParser):
                 row_dict = row.to_dict()
                 sanitized_raw_data = self._sanitize_json_data(row_dict)
                 
+                # Extract sequence number if available
+                # Check if there's a column that might contain sequence numbers
+                sequence_number = None
+                # In many accounting files, the first column contains a sequence number
+                if 0 in row_dict and isinstance(row_dict[0], (int, float)) and not pd.isna(row_dict[0]):
+                    try:
+                        sequence_number = int(row_dict[0])
+                    except (ValueError, TypeError):
+                        sequence_number = None
+                
                 operation = {
                     "file_id": file_id,
                     "operation_date": operation_date,
@@ -286,7 +296,13 @@ class AjurParser(BaseExcelParser):
                     "analytical_credit": analytical_credit,
                     "template_type": "ajur",
                     "raw_data": sanitized_raw_data,
-                    "import_uuid": import_uuid
+                    "import_uuid": import_uuid,
+                    # New audit fields with default values
+                    "sequence_number": sequence_number,
+                    "verified_amount": None,
+                    "deviation_amount": None,
+                    "control_action": None,
+                    "deviation_note": None
                 }
                 
                 operations.append(operation)
@@ -555,6 +571,16 @@ class AjurParser(BaseExcelParser):
                 row_dict = row.to_dict()
                 sanitized_raw_data = self._sanitize_json_data(row_dict)
                 
+                # Extract sequence number if available
+                # Check if there's a column that might contain sequence numbers
+                sequence_number = None
+                # In many accounting files, the first column contains a sequence number
+                if 0 in row_dict and isinstance(row_dict[0], (int, float)) and not pd.isna(row_dict[0]):
+                    try:
+                        sequence_number = int(row_dict[0])
+                    except (ValueError, TypeError):
+                        sequence_number = None
+                
                 operation = {
                     "file_id": file_id,
                     "operation_date": operation_date,
@@ -568,7 +594,13 @@ class AjurParser(BaseExcelParser):
                     "analytical_credit": analytical_credit,
                     "template_type": "ajur",
                     "raw_data": sanitized_raw_data,
-                    "import_uuid": import_uuid
+                    "import_uuid": import_uuid,
+                    # New audit fields with default values
+                    "sequence_number": sequence_number,
+                    "verified_amount": None,
+                    "deviation_amount": None,
+                    "control_action": None,
+                    "deviation_note": None
                 }
                 
                 operations.append(operation)

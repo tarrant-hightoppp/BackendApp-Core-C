@@ -14,7 +14,25 @@ router = APIRouter(tags=["operations"])
 
 @router.get("/", response_model=schemas.operation.OperationList,
           summary="List operations",
-          description="Retrieve accounting operations with comprehensive filtering options")
+          description="""
+          Retrieve accounting operations with comprehensive filtering options
+          
+          ## Filtering Options
+          
+          * **Date Range**: Filter by start_date and end_date
+          * **Account Numbers**: Filter by debit_account or credit_account
+          * **Document Details**: Filter by document_type
+          * **Amount Range**: Filter by min_amount and max_amount
+          * **Description**: Search within descriptions using description_contains
+          * **Template Type**: Filter by source accounting system (template_type)
+          
+          ## Audit Fields
+          
+          * **sequence_number**: Filter by specific sequence number
+          * **has_verified_amount**: Show only operations that have/don't have verified amounts
+          * **has_deviation**: Show only operations that have/don't have deviations
+          * **has_control_action**: Show only operations that have/don't have control actions
+          """)
 def get_operations(
     db: Session = Depends(deps.get_db),
     skip: int = 0,
@@ -29,9 +47,18 @@ def get_operations(
     description_contains: Optional[str] = None,
     template_type: Optional[str] = None,
     file_id: Optional[int] = None,
+    # New audit-related parameters
+    sequence_number: Optional[int] = None,
+    has_verified_amount: Optional[bool] = None,
+    has_deviation: Optional[bool] = None,
+    has_control_action: Optional[bool] = None,
 ) -> Any:
     """
     Retrieve accounting operations with filtering and pagination.
+    
+    This endpoint supports comprehensive filtering options for accounting operations,
+    including the new audit-related fields. Use the filters to narrow down results
+    based on accounting criteria or audit status.
     """
     # Start with a base query for all operations
     query = db.query(models.AccountingOperation).join(
@@ -71,6 +98,28 @@ def get_operations(
     
     if file_id:
         filters.append(models.AccountingOperation.file_id == file_id)
+        
+    # Add filters for audit fields
+    if sequence_number is not None:
+        filters.append(models.AccountingOperation.sequence_number == sequence_number)
+    
+    if has_verified_amount is not None:
+        if has_verified_amount:
+            filters.append(models.AccountingOperation.verified_amount.is_not(None))
+        else:
+            filters.append(models.AccountingOperation.verified_amount.is_(None))
+    
+    if has_deviation is not None:
+        if has_deviation:
+            filters.append(models.AccountingOperation.deviation_amount.is_not(None))
+        else:
+            filters.append(models.AccountingOperation.deviation_amount.is_(None))
+    
+    if has_control_action is not None:
+        if has_control_action:
+            filters.append(models.AccountingOperation.control_action.is_not(None))
+        else:
+            filters.append(models.AccountingOperation.control_action.is_(None))
     
     if filters:
         query = query.filter(and_(*filters))
@@ -86,7 +135,16 @@ def get_operations(
 
 @router.get("/{operation_id}", response_model=schemas.operation.Operation,
            summary="Get operation details",
-           description="Get detailed information about a specific accounting operation")
+           description="""
+           Get detailed information about a specific accounting operation
+           
+           Returns comprehensive information about an accounting operation, including:
+           
+           * Core accounting data (date, accounts, amount)
+           * Document details (type, number)
+           * Analytical information
+           * Audit information (verified amount, deviations, control actions)
+           """)
 def get_operation(
     *,
     db: Session = Depends(deps.get_db),
@@ -188,6 +246,11 @@ def export_operations(
     description_contains: Optional[str] = None,
     template_type: Optional[str] = None,
     file_id: Optional[int] = None,
+    # New audit-related parameters
+    sequence_number: Optional[int] = None,
+    has_verified_amount: Optional[bool] = None,
+    has_deviation: Optional[bool] = None,
+    has_control_action: Optional[bool] = None,
 ) -> Any:
     """
     Export accounting operations to CSV/Excel.
@@ -209,7 +272,11 @@ def export_operations(
             "max_amount": max_amount,
             "description_contains": description_contains,
             "template_type": template_type,
-            "file_id": file_id
+            "file_id": file_id,
+            "sequence_number": sequence_number,
+            "has_verified_amount": has_verified_amount,
+            "has_deviation": has_deviation,
+            "has_control_action": has_control_action
         }
     }
 

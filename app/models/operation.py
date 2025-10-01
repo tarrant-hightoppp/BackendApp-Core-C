@@ -25,6 +25,13 @@ class AccountingOperation(Base):
     analytical_credit = Column(String)
     account_name = Column(String)  # For Business Navigator
     
+    # Audit fields - new fields added for audit functionality
+    sequence_number = Column(Integer)  # № по ред
+    verified_amount = Column(Numeric(15, 2))  # Установена сума при одита
+    deviation_amount = Column(Numeric(15, 2))  # Отклонение
+    control_action = Column(Text)  # Установено контролно действие при одита
+    deviation_note = Column(Text)  # Отклонение (second deviation field)
+    
     # Metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     template_type = Column(String, nullable=False)  # Which template this came from
