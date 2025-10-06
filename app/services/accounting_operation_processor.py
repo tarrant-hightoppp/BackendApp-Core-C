@@ -463,7 +463,8 @@ class AccountingOperationProcessor:
             wrapped_excel = self.template_wrapper.wrap_excel_with_template(
                 excel_buffer,
                 company_name=company_name,
-                year=year
+                year=year,
+                account_type=account_type
             )
             
             # Upload to S3 with the import-specific folder structure:

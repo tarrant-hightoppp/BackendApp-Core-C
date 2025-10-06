@@ -406,7 +406,8 @@ class ExcelTemplateWrapper:
                                 excel_content: Union[BinaryIO, bytes],
                                 company_name: str = "Форт България ЕООД",
                                 year: str = None,
-                                audit_approach: str = "statistical") -> io.BytesIO:
+                                audit_approach: str = "statistical",
+                                account_type: str = None) -> io.BytesIO:
         """
         Wrap an Excel file with operations data in a predefined template
         
@@ -414,6 +415,8 @@ class ExcelTemplateWrapper:
             excel_content: Content of the Excel file to wrap (file-like object or bytes)
             company_name: Name of the company to include in the template
             year: Year to include in the template (default: current year)
+            audit_approach: The audit approach to use (default: "statistical")
+            account_type: The type of account being analyzed ("debit" or "credit")
             
         Returns:
             BytesIO object containing the wrapped Excel file
@@ -672,35 +675,77 @@ class ExcelTemplateWrapper:
         
         # Row 74: Verification statement is already set in the template
         
-        # Generate dynamic conclusion text based on the data
+        # Generate dynamic conclusion text based on the data and account type
         conclusion_text = ""
         
-        # Get unique account types
+        # Get unique account types and the main account being analyzed
         account_types = set()
-        for account in total_by_account.keys():
-            # Convert account to string and extract account type (first 3 digits)
-            account_str = str(account)
-            if account_str and len(account_str) >= 3:
-                account_type = account_str[:3]
-                account_types.add(account_type)
+        main_account_being_analyzed = None
         
-        # Generate conclusion based on account types
-        if '702' in account_types or '703' in account_types:
-            conclusion_text += "Извършват се продажби на софтуерни услуги "
-        
-        if '704' in account_types:
-            if conclusion_text:
-                conclusion_text += "и се префактурират "
-            else:
-                conclusion_text += "Префактурират се "
-            conclusion_text += "разходи за издръжка на предприятието "
-        
-        # Add general conclusion
-        if conclusion_text:
-            conclusion_text += "за сметка на фирмата-майка. "
+        # Determine which accounts to focus on based on account_type
+        if account_type == "debit":
+            # For debit reports, focus on debit accounts
+            account_column = "Дт с/ка"
         else:
-            conclusion_text = "Извършват се стандартни счетоводни операции. "
+            # For credit reports or default, focus on credit accounts
+            account_column = "Кт с/ка"
+            
+        # Extract the main account being analyzed from the data
+        if account_column in operations_df.columns:
+            accounts = operations_df[account_column].dropna().unique()
+            if len(accounts) > 0:
+                # Get the first account and extract its main part (first 3 digits)
+                main_account = str(accounts[0])
+                if '/' in main_account:
+                    main_account = main_account.split('/')[0]
+                if main_account and len(main_account) >= 3:
+                    main_account_being_analyzed = main_account[:3]
         
+        # Also collect all account types for reference
+        for account_col in ["Дт с/ка", "Кт с/ка"]:
+            if account_col in operations_df.columns:
+                for account in operations_df[account_col].dropna().unique():
+                    account_str = str(account)
+                    if account_str and len(account_str) >= 3:
+                        if '/' in account_str:
+                            account_str = account_str.split('/')[0]
+                        account_types.add(account_str[:3])
+        
+        # Generate conclusion based on the main account being analyzed
+        if main_account_being_analyzed:
+            # Reference the specific account being analyzed in the conclusion
+            if main_account_being_analyzed in ['702', '703']:
+                conclusion_text += f"При анализа на сметка {main_account_being_analyzed} се установи, че се извършват продажби на софтуерни услуги "
+            elif main_account_being_analyzed == '704':
+                conclusion_text += f"При анализа на сметка {main_account_being_analyzed} се установи, че се префактурират разходи за издръжка на предприятието "
+            elif main_account_being_analyzed.startswith('4'):
+                conclusion_text += f"При анализа на сметка {main_account_being_analyzed} се установи, че се отразяват разчетни взаимоотношения "
+            elif main_account_being_analyzed.startswith('5'):
+                conclusion_text += f"При анализа на сметка {main_account_being_analyzed} се установи, че се отразяват финансови взаимоотношения "
+            elif main_account_being_analyzed.startswith('6'):
+                conclusion_text += f"При анализа на сметка {main_account_being_analyzed} се установи, че се отразяват разходи "
+            else:
+                conclusion_text += f"При анализа на сметка {main_account_being_analyzed} се установи, че се извършват стандартни счетоводни операции "
+        else:
+            # Fallback to the old logic if we can't determine the main account
+            if '702' in account_types or '703' in account_types:
+                conclusion_text += "Извършват се продажби на софтуерни услуги "
+            
+            if '704' in account_types:
+                if conclusion_text:
+                    conclusion_text += "и се префактурират "
+                else:
+                    conclusion_text += "Префактурират се "
+                conclusion_text += "разходи за издръжка на предприятието "
+            
+            # Add general conclusion if nothing specific was added
+            if not conclusion_text:
+                conclusion_text = "Извършват се стандартни счетоводни операции. "
+        
+        # Add general conclusion about accounting practices
+        if conclusion_text and not conclusion_text.endswith(". "):
+            conclusion_text += "за сметка на фирмата-майка. "
+            
         conclusion_text += "Използват се подходящи счетоводни сметки с детайлна аналитичност. Записванията се отразяват своевременно в регистрите на дружеството."
         
         # Set the conclusion text
@@ -742,7 +787,8 @@ class ExcelTemplateWrapper:
                              s3_key: str,
                              company_name: str = "Форт България ЕООД",
                              year: str = None,
-                             audit_approach: str = "statistical") -> Optional[str]:
+                             audit_approach: str = "statistical",
+                             account_type: str = None) -> Optional[str]:
         """
         Download an Excel file from S3, wrap it with a template, and upload it back to S3
         
@@ -750,6 +796,8 @@ class ExcelTemplateWrapper:
             s3_key: S3 key of the Excel file to wrap
             company_name: Name of the company to include in the template
             year: Year to include in the template
+            audit_approach: The audit approach to use (default: "statistical")
+            account_type: The type of account being analyzed ("debit" or "credit")
             
         Returns:
             S3 key of the wrapped Excel file if successful, None otherwise
@@ -766,7 +814,8 @@ class ExcelTemplateWrapper:
                 excel_content,
                 company_name=company_name,
                 year=year,
-                audit_approach=audit_approach
+                audit_approach=audit_approach,
+                account_type=account_type
             )
             
             # Generate a new S3 key for the wrapped file
