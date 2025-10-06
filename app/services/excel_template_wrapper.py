@@ -21,7 +21,8 @@ class ExcelTemplateWrapper:
     def _create_template_workbook(self,
                                  company_name: str = "Форт България ЕООД",
                                  year: str = None,
-                                 auditor_name: str = "ПРИМА ФИНАНС КОНСУЛТИНГ ЕООД") -> Workbook:
+                                 auditor_name: str = "ПРИМА ФИНАНС КОНСУЛТИНГ ЕООД",
+                                 audit_approach: str = "statistical") -> Workbook:
         """
         Create a new workbook with the C700 template structure
         
@@ -241,7 +242,19 @@ class ExcelTemplateWrapper:
         ws['C15'] = "  Избран подход за тест по  същество "
         ws['C16'] = "проверка на 100 %  на  популация "
         ws['C17'] = "проверка   на  избрани  обекти  на  популация  "
-        ws['A18'] = "X"
+        # Set the X mark based on the audit approach
+        if audit_approach == "full":
+            ws['A16'] = "X"  # 100% population check
+            ws['A17'] = ""
+            ws['A18'] = ""
+        elif audit_approach == "selected":
+            ws['A16'] = ""
+            ws['A17'] = "X"  # Check of selected population objects
+            ws['A18'] = ""
+        else:  # statistical (default)
+            ws['A16'] = ""
+            ws['A17'] = ""
+            ws['A18'] = "X"  # Statistical audit sampling
         ws['C18'] = "одиторска  извадка   - статистическа "
         
         # Apply styles to approach section
@@ -392,7 +405,8 @@ class ExcelTemplateWrapper:
     def wrap_excel_with_template(self,
                                 excel_content: Union[BinaryIO, bytes],
                                 company_name: str = "Форт България ЕООД",
-                                year: str = None) -> io.BytesIO:
+                                year: str = None,
+                                audit_approach: str = "statistical") -> io.BytesIO:
         """
         Wrap an Excel file with operations data in a predefined template
         
@@ -413,13 +427,50 @@ class ExcelTemplateWrapper:
             year = str(datetime.now().year)
             
         # Create the template workbook
-        template_wb = self._create_template_workbook(company_name=company_name, year=year)
+        template_wb = self._create_template_workbook(
+            company_name=company_name,
+            year=year,
+            audit_approach=audit_approach
+        )
         
         # Load the operations data
         operations_df = pd.read_excel(excel_content)
         
         # Get the first sheet of the template
         template_sheet = template_wb.active
+        
+        # Determine the verification period based on operation dates
+        operation_dates = []
+        if "Дата" in operations_df.columns:
+            for date in operations_df["Дата"]:
+                if isinstance(date, datetime):
+                    operation_dates.append(date)
+                elif isinstance(date, str):
+                    try:
+                        # Try to parse the date string
+                        parsed_date = datetime.strptime(date, "%d.%m.%Y")
+                        operation_dates.append(parsed_date)
+                    except ValueError:
+                        try:
+                            # Try alternative format
+                            parsed_date = datetime.strptime(date, "%Y-%m-%d")
+                            operation_dates.append(parsed_date)
+                        except ValueError:
+                            # Skip invalid dates
+                            pass
+        
+        # Set the verification period in the template
+        if operation_dates:
+            # Sort dates to find min and max
+            operation_dates.sort()
+            start_date = operation_dates[0]
+            end_date = operation_dates[-1]
+            
+            # Format the verification period
+            verification_period = f"{start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}"
+            
+            # Update the verification period in the template (cell F5)
+            template_sheet["F5"] = verification_period
         
         # Starting row for operations data
         start_row = 27
@@ -690,7 +741,8 @@ class ExcelTemplateWrapper:
     def wrap_and_upload_excel(self,
                              s3_key: str,
                              company_name: str = "Форт България ЕООД",
-                             year: str = None) -> Optional[str]:
+                             year: str = None,
+                             audit_approach: str = "statistical") -> Optional[str]:
         """
         Download an Excel file from S3, wrap it with a template, and upload it back to S3
         
@@ -713,7 +765,8 @@ class ExcelTemplateWrapper:
             wrapped_excel = self.wrap_excel_with_template(
                 excel_content,
                 company_name=company_name,
-                year=year
+                year=year,
+                audit_approach=audit_approach
             )
             
             # Generate a new S3 key for the wrapped file

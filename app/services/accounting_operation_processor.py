@@ -36,12 +36,16 @@ class AccountingOperationProcessor:
         self.s3_service = S3Service()
         self.template_wrapper = ExcelTemplateWrapper()
     
-    def process_import(self, import_uuid: str) -> Dict[str, Any]:
+    def process_import(self, import_uuid: str, audit_approach: str = "statistical") -> Dict[str, Any]:
         """
         Process all operations for a specific import and generate account-specific files
         
         Args:
             import_uuid: UUID of the import to process
+            audit_approach: The audit approach to use:
+                - "full" for 100% population check
+                - "statistical" for statistical audit sampling (80/20 rule)
+                - "selected" for check of selected population objects
             
         Returns:
             Dictionary with processing results and statistics
@@ -56,10 +60,10 @@ class AccountingOperationProcessor:
             return {"success": False, "message": f"No operations found for import {import_uuid}"}
         
         # Process debit accounts
-        debit_results = self._process_accounts(operations, "debit", import_uuid)
+        debit_results = self._process_accounts(operations, "debit", import_uuid, audit_approach)
         
         # Process credit accounts
-        credit_results = self._process_accounts(operations, "credit", import_uuid)
+        credit_results = self._process_accounts(operations, "credit", import_uuid, audit_approach)
         
         return {
             "success": True,
@@ -106,8 +110,9 @@ class AccountingOperationProcessor:
         
         return operations
     
-    def _process_accounts(self, operations: List[AccountingOperation], 
-                          account_type: str, import_uuid: str) -> List[Dict[str, Any]]:
+    def _process_accounts(self, operations: List[AccountingOperation],
+                          account_type: str, import_uuid: str,
+                          audit_approach: str = "statistical") -> List[Dict[str, Any]]:
         """
         Process operations for all accounts of a specific type (debit/credit)
         
@@ -115,44 +120,65 @@ class AccountingOperationProcessor:
             operations: List of operations to process
             account_type: "debit" or "credit" to determine which accounts to process
             import_uuid: UUID of the import
+            audit_approach: The audit approach to use:
+                - "full" for 100% population check
+                - "statistical" for statistical audit sampling (80/20 rule)
+                - "selected" for check of selected population objects
             
         Returns:
             List of dictionaries with results for each account
         """
-        # Group operations by account
-        account_groups = self._group_by_account(operations, account_type)
+        # Group operations by main account (first 3 digits)
+        main_account_groups = {}
         
-        # print(f"[DEBUG] Grouped {account_type} operations into {len(account_groups)} accounts")
-        # for account, ops in account_groups.items():
-        #     print(f"[DEBUG] Account {account} has {len(ops)} operations")
+        for operation in operations:
+            account = operation.debit_account if account_type == "debit" else operation.credit_account
+            
+            if not account:
+                continue
+            
+            # Extract the main account number (first 3 digits)
+            # For accounts like "453/2", "453/9", the main account is "453"
+            # For accounts with nested subaccounts like "453/2/1", the main account is still "453"
+            parts = account.split('/')
+            main_account = parts[0] if parts else account
+            
+            # Only use the first 3 digits if it's a numeric account
+            if main_account.isdigit() and len(main_account) > 3:
+                main_account = main_account[:3]
+                
+            if main_account not in main_account_groups:
+                main_account_groups[main_account] = []
+                
+            main_account_groups[main_account].append(operation)
+        
+        print(f"[DEBUG] Grouped {account_type} operations into {len(main_account_groups)} main accounts")
+        for account, ops in main_account_groups.items():
+            print(f"[DEBUG] Main account {account} has {len(ops)} operations")
             
         results = []
         
-        # Process each account
-        for account, account_operations in account_groups.items():
-            # Apply filtering logic
-            filtered_operations = self._filter_operations(account_operations)
-            
-            # Generate and upload file
+        # Process each main account
+        for main_account, main_account_operations in main_account_groups.items():
             # Create a timestamp for the filename
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             
-            # Use the full account number including the subaccount part
-            # Replace forward slashes with underscores to avoid creating nested directories in S3
-            safe_account = account.replace('/', '_')
             # Using import_uuid at the beginning of the filename for easy identification
-            file_name = f"{import_uuid}-{account_type.upper()}-{safe_account}__{timestamp}.xlsx"
+            file_name = f"{import_uuid}-{account_type.upper()}-{main_account}__{timestamp}.xlsx"
+            
+            # Don't filter operations - include all subaccounts
+            # This ensures we include all operations for the main account and its subaccounts
             
             # Generate and upload the account-specific Excel file
-            # print(f"[DEBUG] Generating Excel file for {account_type} account {account} with {len(filtered_operations)} operations")
-            s3_key = self._generate_and_upload_file(filtered_operations, file_name, account_type, import_uuid)
+            print(f"[DEBUG] Generating Excel file for {account_type} main account {main_account} with {len(main_account_operations)} operations")
+            s3_key = self._generate_and_upload_file(main_account_operations, file_name, account_type, import_uuid)
             
             if s3_key:
                 print(f"[INFO] Successfully uploaded file to S3: {s3_key}")
                 results.append({
-                    "account": account,
-                    "total_operations": len(account_operations),
-                    "filtered_operations": len(filtered_operations),
+                    "account": main_account,
+                    "total_operations": len(main_account_operations),
+                    "filtered_operations": len(main_account_operations),  # No filtering applied
                     "s3_key": s3_key,
                     "file_name": file_name
                 })
@@ -190,24 +216,28 @@ class AccountingOperationProcessor:
             
         return account_groups
     
-    def _filter_operations(self, operations: List[AccountingOperation]) -> List[AccountingOperation]:
+    def _filter_operations(self, operations: List[AccountingOperation],
+                          threshold_percentage: float = 0.8,
+                          min_operations: int = 30) -> List[AccountingOperation]:
         """
-        Apply filtering logic to operations based on the 80% rule:
-        - If <= 30 operations, include all operations (100%)
-        - If > 30 operations, include operations that make up 80% of total amount
-          (sorted by amount in descending order - largest transactions first)
+        Apply filtering logic to operations based on the specified threshold:
+        - If <= min_operations operations, include all operations (100%)
+        - If > min_operations operations, include operations that make up the specified threshold
+          of total amount (sorted by amount in descending order - largest transactions first)
         
         This implements the business rule that for accounts with many transactions,
-        we focus on the most significant ones that represent 80% of the financial value.
+        we focus on the most significant ones that represent a specified percentage of the financial value.
         
         Args:
             operations: List of operations to filter
+            threshold_percentage: The percentage threshold for filtering (default: 0.8 for 80%)
+            min_operations: The minimum number of operations to apply filtering (default: 30)
             
         Returns:
             Filtered list of operations
         """
-        # If we have 30 or fewer operations, include all of them
-        if len(operations) <= 30:
+        # If we have min_operations or fewer operations, include all of them
+        if len(operations) <= min_operations:
             return operations
             
         # Sort operations by amount (descending) to prioritize largest transactions
@@ -222,14 +252,14 @@ class AccountingOperationProcessor:
             from decimal import Decimal
             
             # Convert the threshold percentage to a Decimal for consistent handling
-            threshold_percentage = Decimal('0.8')
+            threshold_percentage_decimal = Decimal(str(threshold_percentage))
             
             # Check if total_amount is already a Decimal, if not convert it
             if not isinstance(total_amount, Decimal):
                 total_amount = Decimal(str(total_amount))
                 
             # Calculate threshold using Decimal arithmetic
-            threshold = total_amount * threshold_percentage
+            threshold = total_amount * threshold_percentage_decimal
             
             # print(f"[DEBUG] Total amount: {total_amount} (type: {type(total_amount).__name__})")
             # print(f"[DEBUG] Threshold (80%): {threshold} (type: {type(threshold).__name__})")
@@ -239,7 +269,7 @@ class AccountingOperationProcessor:
             print(f"[WARNING] Error handling Decimal arithmetic: {e}, falling back to float")
             # Convert everything to float to ensure compatibility
             total_amount = float(total_amount)
-            threshold = total_amount * 0.8
+            threshold = total_amount * threshold_percentage
         
         # Select operations until reaching the 80% threshold
         filtered_operations = []
@@ -339,9 +369,71 @@ class AccountingOperationProcessor:
                 # For account-specific reports, we want to sort first by account number
                 # (to group subaccounts together), then by amount (descending)
                 if account_type == "debit":
+                    # Sort by debit account to group subaccounts together
                     df = df.sort_values(by=[self.COL_DEBIT_ACC, self.COL_AMOUNT], ascending=[True, False])
+                    
+                    # Remove any summary rows that might be in the middle of the report
+                    # These are rows where the debit account doesn't have a subaccount part (no slash)
+                    # and there are other rows with the same main account but with subaccounts
+                    main_accounts = set()
+                    has_subaccounts = set()
+                    
+                    # First pass: identify accounts with subaccounts (including nested subaccounts)
+                    for acc in df[self.COL_DEBIT_ACC]:
+                        if acc and '/' in acc:
+                            # Handle nested subaccounts like "453/2/1"
+                            parts = acc.split('/')
+                            main_part = parts[0]
+                            has_subaccounts.add(main_part)
+                            main_accounts.add(main_part)
+                            
+                            # Also handle intermediate subaccounts
+                            if len(parts) > 2:
+                                for i in range(1, len(parts)):
+                                    intermediate = '/'.join(parts[:i])
+                                    has_subaccounts.add(intermediate)
+                        elif acc:
+                            main_accounts.add(acc)
+                    
+                    # Second pass: filter out summary rows for accounts that have subaccounts
+                    if has_subaccounts:
+                        df = df[~df[self.COL_DEBIT_ACC].apply(
+                            lambda x: x and (x in has_subaccounts) and not any(
+                                x + '/' in acc for acc in df[self.COL_DEBIT_ACC]
+                            )
+                        )]
                 else:  # credit
+                    # Sort by credit account to group subaccounts together
                     df = df.sort_values(by=[self.COL_CREDIT_ACC, self.COL_AMOUNT], ascending=[True, False])
+                    
+                    # Similar logic for credit accounts
+                    main_accounts = set()
+                    has_subaccounts = set()
+                    
+                    # First pass: identify accounts with subaccounts (including nested subaccounts)
+                    for acc in df[self.COL_CREDIT_ACC]:
+                        if acc and '/' in acc:
+                            # Handle nested subaccounts like "453/2/1"
+                            parts = acc.split('/')
+                            main_part = parts[0]
+                            has_subaccounts.add(main_part)
+                            main_accounts.add(main_part)
+                            
+                            # Also handle intermediate subaccounts
+                            if len(parts) > 2:
+                                for i in range(1, len(parts)):
+                                    intermediate = '/'.join(parts[:i])
+                                    has_subaccounts.add(intermediate)
+                        elif acc:
+                            main_accounts.add(acc)
+                    
+                    # Second pass: filter out summary rows for accounts that have subaccounts
+                    if has_subaccounts:
+                        df = df[~df[self.COL_CREDIT_ACC].apply(
+                            lambda x: x and (x in has_subaccounts) and not any(
+                                x + '/' in acc for acc in df[self.COL_CREDIT_ACC]
+                            )
+                        )]
             except KeyError as e:
                 print(f"[WARNING] Sorting error: Column {e} not found. Falling back to basic sorting.")
                 try:

@@ -35,6 +35,11 @@ def create_test_operations():
         ("411", "503/1", 400.0),
         ("453/2", "411", 500.0),
         ("453/9", "411", 600.0),
+        # Add nested subaccounts
+        ("453/2/1", "503/1/2", 700.0),
+        ("453/2/3", "503/1/2", 800.0),
+        ("453", "503", 900.0),  # Main account summary
+        ("453/2", "503/1", 1000.0),  # Duplicate to test grouping
     ]
     
     for i, (debit, credit, amount) in enumerate(test_accounts):
@@ -54,9 +59,9 @@ def create_test_operations():
     
     return operations
 
-def test_account_grouping():
-    """Test the account grouping logic"""
-    print("\n=== Testing Account Grouping Logic ===")
+def test_main_account_grouping():
+    """Test the main account grouping logic"""
+    print("\n=== Testing Main Account Grouping Logic ===")
     
     # Create processor with mock session
     processor = AccountingOperationProcessor(MockSession())
@@ -64,54 +69,61 @@ def test_account_grouping():
     # Create test operations
     operations = create_test_operations()
     
-    # Test debit account grouping
-    print("\nTesting DEBIT account grouping:")
-    debit_groups = processor._group_by_account(operations, "debit")
+    # Test the _process_accounts method directly
+    print("\nTesting DEBIT account processing:")
+    debit_results = processor._process_accounts(operations, "debit", "test-import")
     
-    print(f"Found {len(debit_groups)} debit account groups:")
-    for account, ops in debit_groups.items():
-        print(f"  Account '{account}' has {len(ops)} operations")
+    print(f"Generated {len(debit_results)} debit account files:")
+    for result in debit_results:
+        print(f"  Account '{result['account']}' with {result['total_operations']} operations")
     
-    # Test credit account grouping
-    print("\nTesting CREDIT account grouping:")
-    credit_groups = processor._group_by_account(operations, "credit")
+    print("\nTesting CREDIT account processing:")
+    credit_results = processor._process_accounts(operations, "credit", "test-import")
     
-    print(f"Found {len(credit_groups)} credit account groups:")
-    for account, ops in credit_groups.items():
-        print(f"  Account '{account}' has {len(ops)} operations")
+    print(f"Generated {len(credit_results)} credit account files:")
+    for result in credit_results:
+        print(f"  Account '{result['account']}' with {result['total_operations']} operations")
     
-    # Verify that we have the correct number of groups
-    # After our fix, we should have 4 debit groups (453/2, 453/9, 453/1, 411)
-    # and 2 credit groups (503/1, 411)
-    expected_debit_groups = 4
+    # Verify that we have the correct number of main account groups
+    # After our fix, we should have 2 debit main account groups (453, 411)
+    # and 2 credit main account groups (503, 411)
+    expected_debit_groups = 2
     expected_credit_groups = 2
     
-    if len(debit_groups) == expected_debit_groups:
-        print(f"\n✅ Debit grouping CORRECT: Found {len(debit_groups)} groups (expected {expected_debit_groups})")
+    if len(debit_results) == expected_debit_groups:
+        print(f"\n✅ Debit grouping CORRECT: Found {len(debit_results)} main account groups (expected {expected_debit_groups})")
     else:
-        print(f"\n❌ Debit grouping ERROR: Found {len(debit_groups)} groups (expected {expected_debit_groups})")
+        print(f"\n❌ Debit grouping ERROR: Found {len(debit_results)} main account groups (expected {expected_debit_groups})")
     
-    if len(credit_groups) == expected_credit_groups:
-        print(f"✅ Credit grouping CORRECT: Found {len(credit_groups)} groups (expected {expected_credit_groups})")
+    if len(credit_results) == expected_credit_groups:
+        print(f"✅ Credit grouping CORRECT: Found {len(credit_results)} main account groups (expected {expected_credit_groups})")
     else:
-        print(f"❌ Credit grouping ERROR: Found {len(credit_groups)} groups (expected {expected_credit_groups})")
+        print(f"❌ Credit grouping ERROR: Found {len(credit_results)} main account groups (expected {expected_credit_groups})")
     
     # Check specific accounts
-    if "453/2" in debit_groups:
-        print("✅ Found debit account '453/2' as expected")
-    else:
-        print("❌ Missing debit account '453/2'")
+    debit_accounts = [result['account'] for result in debit_results]
+    credit_accounts = [result['account'] for result in credit_results]
     
-    if "453/9" in debit_groups:
-        print("✅ Found debit account '453/9' as expected")
+    if "453" in debit_accounts:
+        print("✅ Found main debit account '453' as expected")
     else:
-        print("❌ Missing debit account '453/9'")
+        print("❌ Missing main debit account '453'")
     
-    return len(debit_groups) == expected_debit_groups and len(credit_groups) == expected_credit_groups
+    if "411" in debit_accounts:
+        print("✅ Found main debit account '411' as expected")
+    else:
+        print("❌ Missing main debit account '411'")
+    
+    if "503" in credit_accounts:
+        print("✅ Found main credit account '503' as expected")
+    else:
+        print("❌ Missing main credit account '503'")
+    
+    return len(debit_results) == expected_debit_groups and len(credit_results) == expected_credit_groups
 
 if __name__ == "__main__":
     print("Testing account number processing after fix")
-    success = test_account_grouping()
+    success = test_main_account_grouping()
     
     if success:
         print("\n✅ All tests passed successfully!")

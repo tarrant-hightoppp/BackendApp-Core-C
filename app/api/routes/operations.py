@@ -291,10 +291,13 @@ def export_operations(
            This endpoint implements the account reporting feature that:
            
            1. Groups operations by account number (separate processing for debit and credit accounts)
-           2. Applies filtering based on the 80% rule:
-              - If an account has ≤ 30 operations: includes ALL operations
-              - If an account has > 30 operations: includes operations that constitute 80% of the total amount
-                (sorted by amount in descending order)
+           2. Applies filtering based on the selected audit approach:
+              - **Full (100%)**: Includes ALL operations regardless of count
+              - **Statistical (80/20 rule)**:
+                 - If an account has ≤ 30 operations: includes ALL operations
+                 - If an account has > 30 operations: includes operations that constitute 80% of the total amount
+                   (sorted by amount in descending order)
+              - **Selected Objects**: Custom selection logic for specific objects
            3. Generates XLSX files for each account with naming pattern: `{account}_{import_uuid}_{timestamp}.xlsx`
            4. Uploads files to S3 storage for retrieval
            
@@ -306,7 +309,9 @@ def export_operations(
 def process_import(
     *,
     db: Session = Depends(deps.get_db),
-    import_uuid: str
+    import_uuid: str,
+    audit_approach: str = Query("statistical",
+                               description="Audit approach to use: 'full' (100% population), 'statistical' (80/20 rule), or 'selected' (selected objects)")
 ) -> Any:
     """
     Process all operations for a specific import and generate account-specific Excel files.
@@ -316,10 +321,13 @@ def process_import(
     This endpoint:
     1. Finds all operations related to the specified import UUID
     2. Groups operations by account (separately for debit and credit)
-    3. Applies the 80% filtering rule:
-       - For accounts with ≤30 operations: includes ALL operations
-       - For accounts with >30 operations: includes operations constituting 80% of total amount
-         (sorted by largest amount first)
+    3. Applies filtering based on the selected audit approach:
+       - **Full (100%)**: Includes ALL operations regardless of count
+       - **Statistical (80/20 rule)**:
+          - For accounts with ≤30 operations: includes ALL operations
+          - For accounts with >30 operations: includes operations constituting 80% of total amount
+            (sorted by largest amount first)
+       - **Selected Objects**: Custom selection logic for specific objects
     4. Generates account-specific Excel files with all relevant operation details
     5. Uploads files to S3 with naming pattern: {account}_{import_uuid}_{timestamp}.xlsx
     
@@ -368,9 +376,9 @@ def process_import(
             detail=f"Import with UUID {import_uuid} not found"
         )
     
-    # Process the import
+    # Process the import with the specified audit approach
     processor = AccountingOperationProcessor(db)
-    result = processor.process_import(import_uuid)
+    result = processor.process_import(import_uuid, audit_approach)
     
     if not result["success"]:
         raise HTTPException(

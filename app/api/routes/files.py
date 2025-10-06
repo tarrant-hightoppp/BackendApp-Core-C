@@ -26,7 +26,9 @@ async def upload_file(
     *,
     db: Session = Depends(deps.get_db),
     file: UploadFile = File(..., description="Excel file to upload (.xls or .xlsx)"),
-    import_uuid: str = None, description="Optional. If provided, the file will be part of this import batch. If omitted, a new import_uuid will be generated."
+    import_uuid: str = None, description="Optional. If provided, the file will be part of this import batch. If omitted, a new import_uuid will be generated.",
+    audit_approach: str = Query("statistical",
+                               description="Audit approach to use: 'full' (100% population), 'statistical' (80/20 rule), or 'selected' (selected objects)")
 ) -> Any:
     """
     Upload an Excel file for processing accounting operations.
@@ -35,9 +37,13 @@ async def upload_file(
     1. The file is uploaded to S3 storage
     2. Template type is detected automatically
     3. Operations are extracted from the file
-    4. Account-specific Excel files are generated for both debit and credit accounts
-       - All operations included if account has ≤30 operations
-       - 80% of total amount (by largest transactions) if >30 operations
+    4. Account-specific Excel files are generated for both debit and credit accounts based on the selected audit approach:
+       - **Full (100%)**: Includes ALL operations regardless of count
+       - **Statistical (80/20 rule)**:
+          - If account has ≤30 operations: includes ALL operations
+          - If account has >30 operations: includes operations that constitute 80% of total amount
+            (sorted by largest transactions first)
+       - **Selected Objects**: Custom selection logic for specific objects
     5. Account files are uploaded to S3 in exports/{import_uuid}/{DEBIT|CREDIT}/ directories
     
     For each new import (single file or multiple files), a new import_uuid is generated.
@@ -132,7 +138,7 @@ async def upload_file(
                 # Trigger account processing for this import with the new session
                 print(f"[INFO] Triggering account processing for import {import_uuid}")
                 processor = AccountingOperationProcessor(new_db)
-                result = processor.process_import(import_uuid)
+                result = processor.process_import(import_uuid, audit_approach)
                 
                 if result["success"]:
                     print(f"[INFO] Account processing successful. Generated {result['debit_accounts_processed']} debit files and {result['credit_accounts_processed']} credit files.")
@@ -382,7 +388,9 @@ def delete_file(
 def process_batch(
     *,
     db: Session = Depends(deps.get_db),
-    import_uuid: str
+    import_uuid: str,
+    audit_approach: str = Query("statistical",
+                               description="Audit approach to use: 'full' (100% population), 'statistical' (80/20 rule), or 'selected' (selected objects)")
 ) -> Any:
     """
     Process all files that belong to the same import batch (same import_uuid).
@@ -391,8 +399,13 @@ def process_batch(
     1. Check if all files in the batch have been processed
     2. If any files are not processed, it will process them
     3. Generate account-specific Excel files for both debit and credit accounts
-       - All operations included if account has ≤30 operations
-       - 80% of total amount (by largest transactions) if >30 operations
+       - Based on the selected audit approach:
+          - **Full (100%)**: Includes ALL operations regardless of count
+          - **Statistical (80/20 rule)**:
+             - If account has ≤30 operations: includes ALL operations
+             - If account has >30 operations: includes operations that constitute 80% of total amount
+               (sorted by largest transactions first)
+          - **Selected Objects**: Custom selection logic for specific objects
     4. Upload generated files to S3 in exports/{import_uuid}/{DEBIT|CREDIT}/ directories
     
     Returns details about the processed batch including counts of generated files.
@@ -456,7 +469,7 @@ def process_batch(
                 print(f"[INFO] Found {operation_count} operations for import {import_uuid} before batch processing")
             
             processor = AccountingOperationProcessor(new_db)
-            result = processor.process_import(import_uuid)
+            result = processor.process_import(import_uuid, audit_approach)
             
             if not result["success"]:
                 raise HTTPException(
@@ -494,7 +507,9 @@ async def upload_multiple_files(
     *,
     db: Session = Depends(deps.get_db),
     files: List[UploadFile] = File(..., description="Multiple files to upload (all will share the same import_uuid)"),
-    import_uuid: str = None, description="Optional. If provided, all files will be part of this import batch. If omitted, a new import_uuid will be generated for all these files."
+    import_uuid: str = None, description="Optional. If provided, all files will be part of this import batch. If omitted, a new import_uuid will be generated for all these files.",
+    audit_approach: str = Query("statistical",
+                               description="Audit approach to use: 'full' (100% population), 'statistical' (80/20 rule), or 'selected' (selected objects)")
 ) -> Any:
     """
     Upload multiple Excel files for processing accounting operations.
@@ -504,8 +519,13 @@ async def upload_multiple_files(
     2. Template type is detected automatically
     3. Operations are extracted from the file
     4. Account-specific Excel files are generated for both debit and credit accounts
-       - All operations included if account has ≤30 operations
-       - 80% of total amount (by largest transactions) if >30 operations
+       - Based on the selected audit approach:
+          - **Full (100%)**: Includes ALL operations regardless of count
+          - **Statistical (80/20 rule)**:
+             - If account has ≤30 operations: includes ALL operations
+             - If account has >30 operations: includes operations that constitute 80% of total amount
+               (sorted by largest transactions first)
+          - **Selected Objects**: Custom selection logic for specific objects
     5. Account files are uploaded to S3 in exports/{import_uuid}/{DEBIT|CREDIT}/ directories
     
     All files uploaded in this request will share the same import_uuid.
@@ -610,7 +630,7 @@ async def upload_multiple_files(
         # Trigger account processing for this import with the new session
         print(f"[INFO] Triggering account processing for import {import_uuid}")
         processor = AccountingOperationProcessor(new_db)
-        result = processor.process_import(import_uuid)
+        result = processor.process_import(import_uuid, audit_approach)
         
         if result["success"]:
             print(f"[INFO] Account processing successful. Generated {result['debit_accounts_processed']} debit files and {result['credit_accounts_processed']} credit files.")
