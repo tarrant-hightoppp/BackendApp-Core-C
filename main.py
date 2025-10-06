@@ -101,12 +101,19 @@ def health_check():
 init_db()
 
 # Initialize MinIO bucket
-minio_initialized = init_minio_bucket()
-if not minio_initialized and settings.USE_S3:
-    print("⚠️ WARNING: MinIO bucket initialization failed. File uploads may not work correctly.")
-    print("   Make sure MinIO is running and properly configured in .env file.")
-else:
-    print("🚀 Application ready to handle file uploads")
+try:
+    minio_initialized = init_minio_bucket()
+    if not minio_initialized and settings.USE_S3:
+        print("⚠️ WARNING: MinIO bucket initialization failed. File uploads may not work correctly.")
+        print("   Make sure MinIO is running and properly configured in .env file.")
+    else:
+        print("🚀 Application ready to handle file uploads")
+except Exception as e:
+    print(f"⚠️ ERROR initializing MinIO bucket: {e}")
+    print("   File uploads will not work until this is resolved.")
+    if settings.USE_S3:
+        import traceback
+        traceback.print_exc()
 
 # For direct execution
 if __name__ == "__main__":

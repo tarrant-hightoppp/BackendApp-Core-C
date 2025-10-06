@@ -77,8 +77,8 @@ async def upload_file(
         )
     
     # Generate a unique S3 object key with import_uuid at the start of the filename
-    # and organize files in account_reports/import_uuid/ directory
-    s3_key = f"account_reports/{import_uuid}/{import_uuid}-{file.filename}"
+    # and organize files in uploaded_files/ directory
+    s3_key = f"uploaded_files/{import_uuid}-{file.filename}"
     
     # Upload to S3
     s3_service = S3Service()
@@ -551,8 +551,8 @@ async def upload_multiple_files(
             )
         
         # Generate a unique S3 object key with import_uuid at the start of the filename
-        # and organize files in account_reports/import_uuid/ directory
-        s3_key = f"account_reports/{import_uuid}/{import_uuid}-{file.filename}"
+        # and organize files in uploaded_files/ directory
+        s3_key = f"uploaded_files/{import_uuid}-{file.filename}"
         
         # Upload to S3
         s3_service = S3Service()

@@ -9,6 +9,7 @@ from sqlalchemy import func
 from app.models.operation import AccountingOperation
 from app.models.file import UploadedFile
 from app.services.s3 import S3Service
+from app.services.excel_template_wrapper import ExcelTemplateWrapper
 
 
 class AccountingOperationProcessor:
@@ -33,6 +34,7 @@ class AccountingOperationProcessor:
     def __init__(self, db: Session):
         self.db = db
         self.s3_service = S3Service()
+        self.template_wrapper = ExcelTemplateWrapper()
     
     def process_import(self, import_uuid: str) -> Dict[str, Any]:
         """
@@ -135,12 +137,9 @@ class AccountingOperationProcessor:
             # Create a timestamp for the filename
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             
-            # Extract the main account number (before the slash if present)
-            main_account = account.split('/')[0] if '/' in account else account
-            
-            # Format: DEBIT/CREDIT-mainaccount__timestamp.xlsx
-            # Replace any remaining forward slashes with underscores to avoid creating nested directories in S3
-            safe_account = main_account.replace('/', '_')
+            # Use the full account number including the subaccount part
+            # Replace forward slashes with underscores to avoid creating nested directories in S3
+            safe_account = account.replace('/', '_')
             # Using import_uuid at the beginning of the filename for easy identification
             file_name = f"{import_uuid}-{account_type.upper()}-{safe_account}__{timestamp}.xlsx"
             
@@ -165,16 +164,15 @@ class AccountingOperationProcessor:
         """
         Group operations by account number
         
-        For accounts with format like "300/1", "300/2", they are grouped by the
-        number before the slash. This way all subaccounts of the same main account
-        are processed together.
+        For accounts with format like "453/2", "453/9", we preserve the full account number
+        including the subaccount part, as the subaccount is significant for accounting purposes.
         
         Args:
             operations: List of operations to group
             account_type: "debit" or "credit" to determine which account field to use
             
         Returns:
-            Dictionary with main account numbers as keys and lists of operations as values
+            Dictionary with full account numbers as keys and lists of operations as values
         """
         account_groups = {}
         
@@ -183,14 +181,12 @@ class AccountingOperationProcessor:
             
             if not account:
                 continue
+            
+            # Use the full account number including the subaccount part
+            if account not in account_groups:
+                account_groups[account] = []
                 
-            # Extract the main account number (before the slash if present)
-            main_account = account.split('/')[0] if '/' in account else account
-                
-            if main_account not in account_groups:
-                account_groups[main_account] = []
-                
-            account_groups[main_account].append(operation)
+            account_groups[account].append(operation)
             
         return account_groups
     
@@ -320,8 +316,10 @@ class AccountingOperationProcessor:
                     self.COL_CREDIT_ANALYTICAL: op.analytical_credit,
                     self.COL_AMOUNT: float(op.amount),
                     self.COL_DESCRIPTION: op.description,
-                    self.COL_VERIFIED_AMOUNT: float(op.verified_amount) if op.verified_amount is not None else None,
-                    self.COL_DEVIATION: float(op.deviation_amount) if op.deviation_amount is not None else None,
+                    # Always use the same amount from the database for the verified amount
+                    self.COL_VERIFIED_AMOUNT: float(op.amount),
+                    # Set deviation to 0.0 as requested
+                    self.COL_DEVIATION: 0.0,
                     self.COL_CONTROL_ACTION: op.control_action,
                     self.COL_DEVIATION_NOTE: op.deviation_note,
                     # Keep original fields for reference/compatibility
@@ -358,12 +356,30 @@ class AccountingOperationProcessor:
             df.to_excel(excel_buffer, index=False)
             excel_buffer.seek(0)
             
+            # Wrap the Excel file with the template
+            # Get company name from the first operation if available
+            company_name = "Форт България ЕООД"  # Default
+            year = None
+            
+            # Try to extract year from operations
+            if operations and len(operations) > 0:
+                # Get the year from the first operation's date
+                if operations[0].operation_date:
+                    year = str(operations[0].operation_date.year)
+            
+            # Wrap the Excel file with the template
+            wrapped_excel = self.template_wrapper.wrap_excel_with_template(
+                excel_buffer,
+                company_name=company_name,
+                year=year
+            )
+            
             # Upload to S3 with the import-specific folder structure:
-            # /account_reports/{import_uuid}/sorted_by_debit or /account_reports/{import_uuid}/sorted_by_credit
+            # Each import creates its own directory structure
             directory = "sorted_by_debit" if account_type.lower() == "debit" else "sorted_by_credit"
-            s3_key = f"account_reports/{import_uuid}/{directory}/{file_name}"
+            s3_key = f"{import_uuid}/{directory}/{file_name}"
             # print(f"[DEBUG] Uploading Excel file to S3: {s3_key}")
-            success, message = self.s3_service.upload_file(excel_buffer, s3_key)
+            success, message = self.s3_service.upload_file(wrapped_excel, s3_key)
             # print(f"[DEBUG] S3 upload result: success={success}, message={message}")
             
             if success:

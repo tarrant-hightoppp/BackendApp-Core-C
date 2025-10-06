@@ -64,6 +64,24 @@ class S3Service:
             Tuple of (success: bool, message: str)
         """
         try:
+            # First, verify the bucket exists
+            try:
+                self.s3_client.head_bucket(Bucket=self.bucket_name)
+            except Exception as e:
+                # If bucket doesn't exist, try to create it
+                logger.warning(f"Bucket {self.bucket_name} doesn't exist or is not accessible: {e}")
+                print(f"[WARNING] Bucket {self.bucket_name} doesn't exist or is not accessible: {e}")
+                
+                try:
+                    logger.info(f"Attempting to create bucket: {self.bucket_name}")
+                    self.s3_client.create_bucket(Bucket=self.bucket_name)
+                    logger.info(f"Successfully created bucket: {self.bucket_name}")
+                    print(f"[INFO] Successfully created bucket: {self.bucket_name}")
+                except Exception as create_error:
+                    logger.error(f"Failed to create bucket {self.bucket_name}: {create_error}")
+                    print(f"[ERROR] Failed to create bucket {self.bucket_name}: {create_error}")
+                    return False, f"Failed to create bucket: {str(create_error)}"
+            
             # If file_content is bytes, convert to file-like object
             if isinstance(file_content, bytes):
                 file_content = io.BytesIO(file_content)
@@ -76,33 +94,46 @@ class S3Service:
                     dir_path = '/'.join(object_name.split('/')[:-1]) + '/'
                     
                     # Check if directory exists by listing objects with this prefix
-                    response = self.s3_client.list_objects_v2(
-                        Bucket=self.bucket_name,
-                        Prefix=dir_path,
-                        MaxKeys=1
-                    )
-                    
-                    # If directory doesn't exist, create it
-                    if 'Contents' not in response or len(response['Contents']) == 0:
-                        logger.info(f"Creating directory in S3: {dir_path}")
-                        self.s3_client.put_object(
+                    try:
+                        response = self.s3_client.list_objects_v2(
                             Bucket=self.bucket_name,
-                            Key=dir_path
+                            Prefix=dir_path,
+                            MaxKeys=1
                         )
+                        
+                        # If directory doesn't exist, create it
+                        if 'Contents' not in response or len(response['Contents']) == 0:
+                            logger.info(f"Creating directory in S3: {dir_path}")
+                            self.s3_client.put_object(
+                                Bucket=self.bucket_name,
+                                Key=dir_path
+                            )
+                    except Exception as dir_error:
+                        logger.warning(f"Error checking directory existence: {dir_error}")
+                        # Still try to create the directory
+                        try:
+                            self.s3_client.put_object(
+                                Bucket=self.bucket_name,
+                                Key=dir_path
+                            )
+                            logger.info(f"Created directory in S3: {dir_path}")
+                        except Exception as create_dir_error:
+                            logger.warning(f"Failed to create directory {dir_path}: {create_dir_error}")
             except Exception as e:
                 # Log the error but continue with the upload
                 logger.warning(f"Error checking/creating directory for {object_name}: {e}")
+                print(f"[WARNING] Error checking/creating directory for {object_name}: {e}")
                 
             # Upload the file
             try:
-                # print(f"[DEBUG] Uploading to S3: bucket={self.bucket_name}, key={object_name}")
+                print(f"[DEBUG] Uploading to S3: bucket={self.bucket_name}, key={object_name}")
                 self.s3_client.upload_fileobj(file_content, self.bucket_name, object_name)
                 logger.info(f"Successfully uploaded file to S3: {object_name}")
                 
                 # Verify the file was uploaded by attempting to get its metadata
                 try:
                     self.s3_client.head_object(Bucket=self.bucket_name, Key=object_name)
-                    # print(f"[DEBUG] Verified file exists in S3: {object_name}")
+                    print(f"[DEBUG] Verified file exists in S3: {object_name}")
                 except Exception as e:
                     print(f"[WARNING] File upload succeeded but verification failed: {object_name}, error: {str(e)}")
                 
@@ -114,7 +145,14 @@ class S3Service:
                 return False, f"Exception during upload: {str(e)}"
         except ClientError as e:
             logger.error(f"Error uploading to S3: {e}")
+            print(f"[ERROR] ClientError uploading to S3: {e}")
             return False, f"Error uploading file: {str(e)}"
+        except Exception as e:
+            logger.error(f"Unexpected error during S3 upload: {e}")
+            print(f"[ERROR] Unexpected error during S3 upload: {e}")
+            import traceback
+            traceback.print_exc()
+            return False, f"Unexpected error: {str(e)}"
     
     def download_file(self, object_name: str) -> Optional[bytes]:
         """

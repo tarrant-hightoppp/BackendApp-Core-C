@@ -1,3 +1,4 @@
+import io
 import logging
 import time
 from botocore.exceptions import ClientError, EndpointConnectionError
@@ -11,14 +12,11 @@ RETRY_DELAY = 2  # seconds
 
 def init_minio_bucket():
     """
-    Initialize the MinIO bucket and required subdirectories if they don't exist.
+    Initialize the MinIO bucket if it doesn't exist.
     This should be called when the application starts.
     
-    Ensures the following structure:
-    - accounting-files (bucket)
-      - account_reports/
-        - debit/
-        - credit/
+    Creates only the bucket without any default subdirectories.
+    Each import will create its own directory structure as needed.
     """
     if not settings.USE_S3:
         logger.info("S3 storage is disabled, skipping MinIO bucket initialization")
@@ -31,41 +29,43 @@ def init_minio_bucket():
             s3_service = S3Service()
             s3_client = s3_service._get_s3_client()
             
-            # Check if bucket exists
-            try:
-                s3_client.head_bucket(Bucket=settings.S3_BUCKET)
+            # First, check if the bucket exists by listing all buckets
+            existing_buckets = [bucket['Name'] for bucket in s3_client.list_buckets().get('Buckets', [])]
+            logger.info(f"Existing buckets: {existing_buckets}")
+            print(f"📋 Existing buckets: {existing_buckets}")
+            
+            if settings.S3_BUCKET in existing_buckets:
                 logger.info(f"MinIO bucket '{settings.S3_BUCKET}' already exists")
                 print(f"✅ MinIO bucket '{settings.S3_BUCKET}' verified and ready to use")
                 return True
-            except ClientError as e:
-                error_code = e.response.get('Error', {}).get('Code')
-                # If bucket doesn't exist (404) or we don't have access to check (403)
-                if error_code in ['404', '403']:
-                    # Create the bucket
-                    logger.info(f"Creating MinIO bucket: {settings.S3_BUCKET}")
-                    s3_client.create_bucket(Bucket=settings.S3_BUCKET)
-                    logger.info(f"MinIO bucket '{settings.S3_BUCKET}' created successfully")
-                    print(f"✅ MinIO bucket '{settings.S3_BUCKET}' created successfully")
-                    
-                    # Verify the bucket was created
-                    s3_client.head_bucket(Bucket=settings.S3_BUCKET)
-                    
-                    # Create required subdirectories by creating empty objects with directory keys
-                    # For MinIO/S3, directories are just objects with a trailing slash
-                    logger.info("Creating required subdirectories in MinIO bucket")
-                    
-                    # Create account_reports directory structure
-                    s3_client.put_object(Bucket=settings.S3_BUCKET, Key="account_reports/")
-                    s3_client.put_object(Bucket=settings.S3_BUCKET, Key="account_reports/debit/")
-                    s3_client.put_object(Bucket=settings.S3_BUCKET, Key="account_reports/credit/")
-                    
-                    logger.info("MinIO bucket directory structure created successfully")
-                    print("✅ MinIO subdirectories created: account_reports/debit/ and account_reports/credit/")
-                    
-                    return True
-                else:
-                    # Re-raise other errors
-                    raise
+            
+            # If bucket doesn't exist, create it
+            logger.info(f"Creating MinIO bucket: {settings.S3_BUCKET}")
+            s3_client.create_bucket(Bucket=settings.S3_BUCKET)
+            logger.info(f"MinIO bucket '{settings.S3_BUCKET}' created successfully")
+            print(f"✅ MinIO bucket '{settings.S3_BUCKET}' created successfully")
+            
+            # Verify the bucket was created
+            try:
+                s3_client.head_bucket(Bucket=settings.S3_BUCKET)
+                
+                # Create a test file to ensure the bucket is working
+                test_content = io.BytesIO(b"Bucket initialization test")
+                s3_client.upload_fileobj(test_content, settings.S3_BUCKET, "test.txt")
+                logger.info(f"Test file uploaded to bucket '{settings.S3_BUCKET}'")
+                print(f"✅ Test file uploaded to bucket '{settings.S3_BUCKET}'")
+                
+                # No default subdirectories are created
+                # Each import will create its own directory structure as needed
+                
+                logger.info("MinIO bucket created and verified successfully")
+                print("✅ MinIO bucket created and verified successfully")
+                
+                return True
+            except Exception as e:
+                logger.error(f"Failed to verify bucket creation: {e}")
+                print(f"❌ Failed to verify bucket creation: {e}")
+                raise
         
         except EndpointConnectionError as e:
             retries += 1

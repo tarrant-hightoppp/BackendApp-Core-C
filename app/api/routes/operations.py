@@ -335,7 +335,7 @@ def process_import(
                 "account": "122",
                 "total_operations": 45,
                 "filtered_operations": 28,
-                "s3_key": "account_reports/debit/122_abc123_20250917041532.xlsx",
+                "s3_key": "abc123/sorted_by_debit/122_abc123_20250917041532.xlsx",
                 "file_name": "122_abc123_20250917041532.xlsx"
             },
             ...
@@ -345,7 +345,7 @@ def process_import(
                 "account": "401",
                 "total_operations": 22,
                 "filtered_operations": 22,
-                "s3_key": "account_reports/credit/401_abc123_20250917041532.xlsx",
+                "s3_key": "abc123/sorted_by_credit/401_abc123_20250917041532.xlsx",
                 "file_name": "401_abc123_20250917041532.xlsx"
             },
             ...
