@@ -227,7 +227,7 @@ class ExcelTemplateWrapper:
         for row in range(9, 14):
             cell = ws.cell(row=row, column=1)
             cell.font = normal_font
-            cell.alignment = Alignment(wrap_text=True, vertical='center')
+            cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')  # Center horizontally
             cell.border = border
         
         # Approach section - merge cells
@@ -298,107 +298,88 @@ class ExcelTemplateWrapper:
             cell.border = border
             cell.fill = teal_fill  # Use teal color for the operations header row
             
-        # Add empty rows for operations (rows 27-70)
-        for row in range(27, 71):
+        # Add empty rows for operations
+        # For "full" audit approach, we need more rows - allocate 500 rows to be safe
+        max_row = 500 if audit_approach == "full" else 71
+        for row in range(27, max_row):
             for col in range(1, 12):
                 cell = ws.cell(row=row, column=col)
                 cell.border = border
         
-        # Add conclusion section headers (starting at row 71)
-        # Merge cells for conclusion section
-        ws.merge_cells('A71:G71')
+        # Add conclusion section headers
+        # For "full" audit approach, the conclusion section starts after the operations
+        conclusion_start_row = max_row
         
-        # Rows 72-74: Merge A-B and C-G
-        for row in range(72, 75):
+        # Create the conclusion table header
+        ws.merge_cells(f'A{conclusion_start_row}:K{conclusion_start_row}')
+        
+        # Merge A-B for the label columns
+        for i in range(1, 15):
+            row = conclusion_start_row + i
             ws.merge_cells(f'A{row}:B{row}')
-            ws.merge_cells(f'C{row}:G{row}')
         
-        # Rows 75-78: Merge cells for "Проектиране на грешката" section
-        for row in range(75, 79):
-            if row == 75 or row == 76:
-                ws.merge_cells(f'A{row}:B{row}')
-            ws.merge_cells(f'C{row}:G{row}')
-        
-        # Rows 79-83: Merge cells for "Констатирани СНОН" section
-        for row in range(79, 84):
-            ws.merge_cells(f'A{row}:B{row}')
-            ws.merge_cells(f'C{row}:G{row}')
-        
-        # Row 84: Merge cells for "Други заключения" section
-        ws.merge_cells('A84:B84')
-        ws.merge_cells('C84:G84')
+        # Don't merge C-G for content cells - we need separate columns for each account
+        # Instead, we'll create a table-like structure with individual cells
         
         # Conclusion section content - headers only (values will be populated dynamically)
-        ws['A71'] = "ЗАКЛЮЧЕНИЯ :"
-        ws['A72'] = "Обща  сума/брой   на  проверени   документи "
-        # C72 will be populated dynamically
-        ws['A73'] = "Обща  сума / брой на обекти в  популация "
-        # C73 will be populated dynamically
-        ws['A74'] = "Равнение на  ст/ст на популация с оборотна ведомости; глава  книга ; ФО "
-        ws['C74'] = "Стойността се равнява на тази по Об.ведомост и Гл.кн."
-        ws['A75'] = "Проектиране на грешката "
-        ws['A76'] = "Проектиране на грешката "
-        ws['C76'] = "НЕПРИЛОЖИМО"
-        ws['A77'] = ""
-        ws['C77'] = "НЕПРИЛОЖИМО"
-        ws['A78'] = ""
-        ws['C78'] = "НЕПРИЛОЖИМО"
-        ws['A79'] = "Констатирани  СНОН "
-        ws['C79'] = "Не са констатирани съществени неточности, отклонения и несъответствия при осчетоводяване на продажбите."
-        ws['A84'] = "Други  заключения "
-        # C84 will be populated dynamically
+        ws[f'A{conclusion_start_row}'] = "ЗАКЛЮЧЕНИЯ :"
+        ws[f'A{conclusion_start_row+1}'] = "Обща  сума/брой   на  проверени   документи "
+        ws[f'A{conclusion_start_row+2}'] = "Обща  сума / брой на обекти в  популация "
+        ws[f'A{conclusion_start_row+3}'] = "Равнение на  ст/ст на популация с оборотна ведомости; глава  книга ; ФО "
+        ws[f'A{conclusion_start_row+4}'] = "Проектиране на грешката "
+        ws[f'A{conclusion_start_row+5}'] = "Проектиране на грешката "
+        ws[f'C{conclusion_start_row+5}'] = "НЕПРИЛОЖИМО"
+        ws[f'A{conclusion_start_row+6}'] = ""
+        ws[f'A{conclusion_start_row+7}'] = ""
+        ws[f'A{conclusion_start_row+8}'] = "Констатирани  СНОН "
+        ws[f'C{conclusion_start_row+8}'] = "Не са констатирани съществени неточности, отклонения и несъответствия при осчетоводяване на продажбите."
+        ws[f'A{conclusion_start_row+13}'] = "Други  заключения "
+        # Will be populated dynamically
         
         # Apply styles to conclusion section - with proper formatting
         # Header row (ЗАКЛЮЧЕНИЯ) with improved formatting
-        for col in range(1, 8):
-            cell = ws.cell(row=71, column=col)
+        for col in range(1, 12):
+            cell = ws.cell(row=conclusion_start_row, column=col)
             cell.font = Font(name='Calibri', size=12, bold=True)  # Slightly larger font
             cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')  # Center align
             cell.border = border
             cell.fill = teal_fill  # Use teal color for the conclusion header
         
         # Content rows with improved formatting
-        for row in range(72, 90):
-            for col in range(1, 8):
+        for i in range(1, 20):  # Format 20 rows after conclusion header
+            row = conclusion_start_row + i
+            
+            # Format label column (A-B merged)
+            label_cell = ws.cell(row=row, column=1)
+            if not label_cell.font:
+                label_cell.font = normal_font
+            label_cell.alignment = Alignment(wrap_text=True, vertical='center')
+            label_cell.border = border
+            
+            # Apply different formatting to different sections
+            if i in [1, 2, 3]:  # First section - Account totals
+                label_cell.fill = light_gray_fill
+                label_cell.font = Font(name='Calibri', size=11, bold=True)  # Make labels bold
+            elif i in [4, 5, 6, 7]:  # Проектиране на грешката section
+                label_cell.fill = light_gray_fill
+                if i == 4:  # Section header
+                    label_cell.font = Font(name='Calibri', size=11, bold=True)
+            elif i in [8, 9, 10, 11, 12]:  # Констатирани СНОН section
+                label_cell.fill = light_gray_fill
+                if i == 8:  # Section header
+                    label_cell.font = Font(name='Calibri', size=11, bold=True)
+            elif i == 13:  # Други заключения section
+                label_cell.fill = light_gray_fill
+                label_cell.font = Font(name='Calibri', size=11, bold=True)
+            
+            # Format content cells (C-K) - individual cells for each account
+            for col in range(3, 12):
                 cell = ws.cell(row=row, column=col)
                 if not cell.font:
                     cell.font = normal_font
-                
-                # Improve alignment for better readability
-                if col <= 2:  # A-B columns (labels)
-                    cell.alignment = Alignment(wrap_text=True, vertical='center')
-                else:  # C-G columns (content)
-                    cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='left')
-                
+                cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='left')
                 cell.border = border
-                
-                # Apply different formatting to different sections
-                if row in [72, 73, 74]:  # First section - Account totals
-                    if col <= 2:  # A-B columns
-                        cell.fill = light_gray_fill
-                        cell.font = Font(name='Calibri', size=11, bold=True)  # Make labels bold
-                    else:  # C-G columns
-                        cell.fill = footer_fill
-                elif row in [75, 76, 77, 78]:  # Проектиране на грешката section
-                    if col <= 2:  # A-B columns
-                        cell.fill = light_gray_fill
-                        if row == 75:  # Section header
-                            cell.font = Font(name='Calibri', size=11, bold=True)
-                    else:  # C-G columns
-                        cell.fill = footer_fill
-                elif row in [79, 80, 81, 82, 83]:  # Констатирани СНОН section
-                    if col <= 2:  # A-B columns
-                        cell.fill = light_gray_fill
-                        if row == 79:  # Section header
-                            cell.font = Font(name='Calibri', size=11, bold=True)
-                    else:  # C-G columns
-                        cell.fill = footer_fill
-                elif row == 84:  # Други заключения section
-                    if col <= 2:  # A-B columns
-                        cell.fill = light_gray_fill
-                        cell.font = Font(name='Calibri', size=11, bold=True)
-                    else:  # C-G columns
-                        cell.fill = footer_fill
+                cell.fill = footer_fill
         
         return wb
         
@@ -483,9 +464,14 @@ class ExcelTemplateWrapper:
         total_by_account = {}
         current_account_rows = []
         
+        # For "full" audit approach, we need to include all operations
+        # For other approaches, we'll limit the number of rows
+        max_rows = float('inf') if audit_approach == "full" else 43  # No limit for full audit approach
+        
         for i, row_data in operations_df.iterrows():
             # Skip if we've reached the maximum number of rows we can fit
-            if row_count >= 43:  # 70 - 27 = 43 rows available
+            # But for "full" audit approach, we'll include all operations
+            if row_count >= max_rows and audit_approach != "full":
                 break
                 
             row_num = start_row + row_count
@@ -640,40 +626,149 @@ class ExcelTemplateWrapper:
                     
                     row_count += 1  # Move to the next row
         
+        # Determine the conclusion section start row based on audit approach and actual data
+        conclusion_start_row = 71
+        if audit_approach == "full":
+            # For full audit approach, conclusion starts after the last data row
+            # Add 5 rows of padding after the last data row
+            conclusion_start_row = start_row + row_count + 5
+            # Ensure it's at least row 150 for consistency
+            conclusion_start_row = max(conclusion_start_row, 150)
+        
         # Update conclusion section with account totals in a structured table format
-        # First, ensure the cells in the conclusion section are properly merged
-        for row in range(72, 75):
-            # Keep the A-B columns merged as they are
-            # But ensure C-G is merged for each row to create a single cell for the content
-            try:
-                template_sheet.merge_cells(f'C{row}:G{row}')
-            except:
-                pass  # Ignore if cells are already merged
+        # First, ensure the header row spans all columns
+        try:
+            template_sheet.merge_cells(f'A{conclusion_start_row}:K{conclusion_start_row}')
+        except:
+            pass  # Ignore if cells are already merged
         
-        # Create a structured table for account totals
-        # Row 72: Checked documents total
-        checked_docs_text = "Обща сума проверени документи по Кт на: "
-        for account, total in total_by_account.items():
-            checked_docs_text += f"{account} - {total:.2f} лв.; "
+        # For each account, create a separate column in the conclusion table
+        accounts = list(total_by_account.keys())
         
-        # Remove trailing separator if exists
-        if checked_docs_text.endswith("; "):
-            checked_docs_text = checked_docs_text[:-2]
+        # Define border style for consistency
+        border_style = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
         
-        template_sheet.cell(row=72, column=3).value = checked_docs_text
+        # Define orange fill for the account cells
+        orange_fill = PatternFill(start_color="FFCC99", end_color="FFCC99", fill_type="solid")
         
-        # Row 73: Total sum by account
-        total_sum_text = "Обща сума по Кт на: "
-        for account, total in total_by_account.items():
-            total_sum_text += f"{account} - {total:.2f} лв.; "
+        # Add summary statistics for all operations
+        total_operations = len(operations_df)
+        total_amount = operations_df["Сума"].sum() if "Сума" in operations_df.columns else 0
         
-        # Remove trailing separator if exists
-        if total_sum_text.endswith("; "):
-            total_sum_text = total_sum_text[:-2]
+        # Add a summary row before the conclusion section
+        summary_row = conclusion_start_row - 3
+        template_sheet.cell(row=summary_row, column=1).value = "ОБОБЩЕНА СТАТИСТИКА:"
+        template_sheet.cell(row=summary_row, column=1).font = Font(name='Calibri', size=12, bold=True)
+        template_sheet.cell(row=summary_row, column=1).alignment = Alignment(wrap_text=True, vertical='center')
         
-        template_sheet.cell(row=73, column=3).value = total_sum_text
+        template_sheet.cell(row=summary_row+1, column=1).value = f"Общ брой операции: {total_operations}"
+        template_sheet.cell(row=summary_row+1, column=1).font = Font(name='Calibri', size=11)
         
-        # Row 74: Verification statement is already set in the template
+        template_sheet.cell(row=summary_row+1, column=4).value = f"Обща сума: {total_amount:.2f} лв."
+        template_sheet.cell(row=summary_row+1, column=4).font = Font(name='Calibri', size=11)
+        template_sheet.cell(row=summary_row+1, column=4).alignment = Alignment(horizontal='left')
+        
+        # Create a table-like structure for the conclusion that starts from column A
+        # Process up to 4 accounts
+        for i, account in enumerate(accounts[:4]):
+            total = total_by_account[account]
+            
+            # Helper function to safely set cell value, handling merged cells
+            def safe_set_cell_value(sheet, row, col, value, fill, alignment, border):
+                cell = sheet.cell(row=row, column=col)
+                
+                # Check if this is a merged cell
+                is_merged = False
+                for merged_range in sheet.merged_cells.ranges:
+                    # Get the range coordinates
+                    min_row, min_col, max_row, max_col = merged_range.min_row, merged_range.min_col, merged_range.max_row, merged_range.max_col
+                    
+                    # Check if our cell is within this range
+                    if (min_row <= row <= max_row) and (min_col <= col <= max_col):
+                        # If it's a merged cell, we need to use the top-left cell
+                        if (row, col) != (min_row, min_col):
+                            # This is not the top-left cell, so we need to use that one instead
+                            cell = sheet.cell(row=min_row, column=min_col)
+                        is_merged = True
+                        break
+                
+                # Now set the value and styling
+                cell.value = value
+                cell.fill = fill
+                cell.alignment = alignment
+                cell.border = border
+                
+                return cell
+            
+            # Row 1: Checked documents total
+            safe_set_cell_value(
+                template_sheet,
+                conclusion_start_row+1,
+                i+1,
+                f"Обща сума проверени документи по Кт на {account} - {total:.2f} лв.",
+                orange_fill,
+                Alignment(wrap_text=True, vertical='center'),
+                border_style
+            )
+            
+            # Row 2: Total sum by account
+            safe_set_cell_value(
+                template_sheet,
+                conclusion_start_row+2,
+                i+1,
+                f"Обща сума по Кт на {account} - {total:.2f}лв.",
+                orange_fill,
+                Alignment(wrap_text=True, vertical='center'),
+                border_style
+            )
+            
+            # Row 3: Verification statement
+            safe_set_cell_value(
+                template_sheet,
+                conclusion_start_row+3,
+                i+1,
+                "Стойността се равнява на тази по Об.ведомост и Гл.кн.",
+                orange_fill,
+                Alignment(wrap_text=True, vertical='center'),
+                border_style
+            )
+        
+        # Set the "НЕПРИЛОЖИМО" text in a merged cell for the error projection section
+        try:
+            template_sheet.merge_cells(f'A{conclusion_start_row+5}:K{conclusion_start_row+5}')
+        except:
+            pass
+        
+        safe_set_cell_value(
+            template_sheet,
+            conclusion_start_row+5,
+            1,
+            "НЕПРИЛОЖИМО",
+            orange_fill,
+            Alignment(wrap_text=True, vertical='center'),
+            border_style
+        )
+        
+        # Set the СНОН text in a merged cell
+        try:
+            template_sheet.merge_cells(f'A{conclusion_start_row+8}:K{conclusion_start_row+8}')
+        except:
+            pass
+        
+        safe_set_cell_value(
+            template_sheet,
+            conclusion_start_row+8,
+            1,
+            "Не са констатирани съществени неточности, отклонения и несъответствия при осчетоводяване на продажбите.",
+            orange_fill,
+            Alignment(wrap_text=True, vertical='center'),
+            border_style
+        )
         
         # Generate dynamic conclusion text based on the data and account type
         conclusion_text = ""
@@ -748,29 +843,21 @@ class ExcelTemplateWrapper:
             
         conclusion_text += "Използват се подходящи счетоводни сметки с детайлна аналитичност. Записванията се отразяват своевременно в регистрите на дружеството."
         
-        # Set the conclusion text
-        template_sheet.cell(row=84, column=3).value = conclusion_text
+        # Set the conclusion text in a merged cell
+        try:
+            template_sheet.merge_cells(f'A{conclusion_start_row+13}:K{conclusion_start_row+13}')
+        except:
+            pass
         
-        # Define border style for consistency
-        border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
+        safe_set_cell_value(
+            template_sheet,
+            conclusion_start_row+13,
+            1,
+            conclusion_text,
+            orange_fill,
+            Alignment(wrap_text=True, vertical='center'),
+            border_style
         )
-        
-        # Apply proper formatting to ensure text wrapping and alignment
-        for row in range(72, 75):
-            cell = template_sheet.cell(row=row, column=3)
-            cell.alignment = Alignment(wrap_text=True, vertical='center')
-            cell.font = Font(name='Calibri', size=11)
-            
-            # Make the first row bold for better readability
-            if row == 72:
-                cell.font = Font(name='Calibri', size=11, bold=True)
-                
-            # Add proper borders
-            cell.border = border
         
         # Create a BytesIO object to store the result
         result = io.BytesIO()

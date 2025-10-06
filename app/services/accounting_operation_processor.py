@@ -169,16 +169,29 @@ class AccountingOperationProcessor:
             # Don't filter operations - include all subaccounts
             # This ensures we include all operations for the main account and its subaccounts
             
+            # Apply filtering based on audit approach
+            filtered_operations = main_account_operations
+            
+            # Only apply filtering for statistical approach
+            # For "full" approach, we include all operations (100%)
+            if audit_approach == "statistical":
+                filtered_operations = self._filter_operations(main_account_operations, audit_approach=audit_approach)
+                print(f"[DEBUG] Filtered {account_type} main account {main_account} operations: {len(filtered_operations)} of {len(main_account_operations)}")
+            else:
+                # For "full" approach, ensure we're using ALL operations
+                filtered_operations = main_account_operations
+                print(f"[DEBUG] Using all {len(main_account_operations)} operations for {account_type} main account {main_account} (audit approach: {audit_approach})")
+            
             # Generate and upload the account-specific Excel file
-            print(f"[DEBUG] Generating Excel file for {account_type} main account {main_account} with {len(main_account_operations)} operations")
-            s3_key = self._generate_and_upload_file(main_account_operations, file_name, account_type, import_uuid)
+            print(f"[DEBUG] Generating Excel file for {account_type} main account {main_account} with {len(filtered_operations)} operations")
+            s3_key = self._generate_and_upload_file(filtered_operations, file_name, account_type, import_uuid, audit_approach)
             
             if s3_key:
                 print(f"[INFO] Successfully uploaded file to S3: {s3_key}")
                 results.append({
                     "account": main_account,
                     "total_operations": len(main_account_operations),
-                    "filtered_operations": len(main_account_operations),  # No filtering applied
+                    "filtered_operations": len(filtered_operations),  # Use the actual filtered count
                     "s3_key": s3_key,
                     "file_name": file_name
                 })
@@ -218,12 +231,15 @@ class AccountingOperationProcessor:
     
     def _filter_operations(self, operations: List[AccountingOperation],
                           threshold_percentage: float = 0.8,
-                          min_operations: int = 30) -> List[AccountingOperation]:
+                          min_operations: int = 30,
+                          audit_approach: str = "statistical") -> List[AccountingOperation]:
         """
-        Apply filtering logic to operations based on the specified threshold:
-        - If <= min_operations operations, include all operations (100%)
-        - If > min_operations operations, include operations that make up the specified threshold
-          of total amount (sorted by amount in descending order - largest transactions first)
+        Apply filtering logic to operations based on the specified threshold and audit approach:
+        - For "full" audit approach, include all operations (100%)
+        - For "statistical" audit approach:
+          - If <= min_operations operations, include all operations (100%)
+          - If > min_operations operations, include operations that make up the specified threshold
+            of total amount (sorted by amount in descending order - largest transactions first)
         
         This implements the business rule that for accounts with many transactions,
         we focus on the most significant ones that represent a specified percentage of the financial value.
@@ -232,10 +248,17 @@ class AccountingOperationProcessor:
             operations: List of operations to filter
             threshold_percentage: The percentage threshold for filtering (default: 0.8 for 80%)
             min_operations: The minimum number of operations to apply filtering (default: 30)
+            audit_approach: The audit approach to use (default: "statistical")
             
         Returns:
             Filtered list of operations
         """
+        # For "full" audit approach, include all operations (100%)
+        if audit_approach == "full":
+            print(f"[INFO] Using full audit approach - including all {len(operations)} operations")
+            return operations
+            
+        # For other approaches, apply filtering logic
         # If we have min_operations or fewer operations, include all of them
         if len(operations) <= min_operations:
             return operations
@@ -311,7 +334,8 @@ class AccountingOperationProcessor:
         return filtered_operations
     
     def _generate_and_upload_file(self, operations: List[AccountingOperation],
-                                  file_name: str, account_type: str, import_uuid: str) -> Optional[str]:
+                                  file_name: str, account_type: str, import_uuid: str,
+                                  audit_approach: str = "statistical") -> Optional[str]:
         """
         Generate Excel file with operations and upload to S3
         
@@ -320,6 +344,7 @@ class AccountingOperationProcessor:
             file_name: Name of the file to generate
             account_type: "debit" or "credit" to include in file metadata
             import_uuid: UUID of the import batch
+            audit_approach: The audit approach to use (default: "statistical")
             
         Returns:
             S3 key if successful, None otherwise
@@ -464,7 +489,8 @@ class AccountingOperationProcessor:
                 excel_buffer,
                 company_name=company_name,
                 year=year,
-                account_type=account_type
+                account_type=account_type,
+                audit_approach=audit_approach
             )
             
             # Upload to S3 with the import-specific folder structure:

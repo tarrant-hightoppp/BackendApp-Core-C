@@ -106,6 +106,10 @@ class MicroinvestParser(BaseExcelParser):
         description_col = self._find_column(df, ['основание', 'описание', 'description'])
         partner_col = self._find_column(df, ['партньор', 'partner'])
         
+        # Add columns for analytical accounts
+        debit_analytical_col = self._find_column(df, ['дебит', 'debit'])
+        credit_analytical_col = self._find_column(df, ['кредит', 'credit'])
+        
         # print(f"[DEBUG] Microinvest identified columns: debit={debit_account_col}, credit={credit_account_col}, date={date_col}, amount={amount_col}, document_type={doc_type_col}, document_number={doc_number_col}, description={description_col}, partner={partner_col}")
         
         # Process each row
@@ -139,6 +143,10 @@ class MicroinvestParser(BaseExcelParser):
                 description = self._get_value(row, description_col) if description_col else None
                 partner_name = self._get_value(row, partner_col) if partner_col else None
                 
+                # Get analytical account values
+                analytical_debit = self._get_value(row, debit_analytical_col) if debit_analytical_col else None
+                analytical_credit = self._get_value(row, credit_analytical_col) if credit_analytical_col else None
+                
                 # Look for sequence number in row (typically first column)
                 sequence_number = None
                 # Try to find a sequence number by checking the first few columns
@@ -161,6 +169,8 @@ class MicroinvestParser(BaseExcelParser):
                     "amount": amount,
                     "description": description,
                     "partner_name": partner_name,
+                    "analytical_debit": analytical_debit,
+                    "analytical_credit": analytical_credit,
                     "template_type": "MICROINVEST",
                     "raw_data": self._make_json_serializable(row),
                     "import_uuid": import_uuid,
