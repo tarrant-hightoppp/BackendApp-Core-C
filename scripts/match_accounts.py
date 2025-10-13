@@ -110,6 +110,7 @@ def read_credit_file(file_path):
 def match_accounts(credit_df, rival_df):
     """
     Match entries between CREDIT and Rival files and fill in missing debit accounts.
+    Uses proportional matching for credit operations from Rival.
     
     Args:
         credit_df (pd.DataFrame): DataFrame from the CREDIT file
@@ -128,6 +129,18 @@ def match_accounts(credit_df, rival_df):
     matches_found = 0
     total_entries = len(credit_df)
     
+    # Group Rival operations by document number and date for proportional matching
+    rival_groups = {}
+    for _, row in rival_df.iterrows():
+        doc_num = str(row['doc_number'])
+        # Convert date to date object without time
+        date = row['date'].date() if isinstance(row['date'], pd.Timestamp) else row['date']
+        
+        key = (doc_num, date)
+        if key not in rival_groups:
+            rival_groups[key] = []
+        rival_groups[key].append(row)
+    
     # Process each row in the CREDIT file
     for i, credit_row in updated_credit_df.iterrows():
         # Skip rows that already have a debit account
@@ -144,13 +157,77 @@ def match_accounts(credit_df, rival_df):
         if not credit_doc_num or pd.isna(credit_date) or pd.isna(credit_amount):
             continue
         
+        # Convert date to date object for matching
+        credit_date_obj = credit_date.date() if isinstance(credit_date, pd.Timestamp) else credit_date
+        
         # Convert date to string for printing
         credit_date_str = credit_date.strftime('%Y-%m-%d') if isinstance(credit_date, pd.Timestamp) else str(credit_date)
         
+        # Check if we have a group of Rival operations with the same document number and date
+        rival_group = rival_groups.get((credit_doc_num, credit_date_obj), [])
+        
+        if len(rival_group) > 1:
+            # We have multiple Rival operations with the same document/date
+            # Try proportional matching first
+            print(f"Attempting proportional matching for Doc #{credit_doc_num}, Date: {credit_date_str}")
+            
+            # Filter credit operations with matching credit account if specified
+            credit_ops = [op for op in rival_group if op['credit_account'] == credit_acct] if credit_acct else []
+            
+            # If no matching credit operations found or credit account not specified, use all credit operations
+            if not credit_ops:
+                credit_ops = [op for op in rival_group if not pd.isna(op['credit_account'])]
+            
+            # Filter for operations with matching amounts
+            matching_amount_ops = [op for op in credit_ops if abs(op['amount'] - credit_amount) < 0.01]
+            
+            if matching_amount_ops:
+                # Direct amount match found
+                matching_debit_accounts = [op['debit_account'] for op in matching_amount_ops
+                                         if not pd.isna(op['debit_account']) and str(op['debit_account']) != 'nan']
+                
+                if matching_debit_accounts:
+                    if len(matching_debit_accounts) == 1:
+                        updated_credit_df.at[i, 'Дт с/ка'] = matching_debit_accounts[0]
+                        matches_found += 1
+                        print(f"Proportional match found for Doc #{credit_doc_num}, Date: {credit_date_str}, Amount: {credit_amount}: {matching_debit_accounts[0]}")
+                    else:
+                        updated_credit_df.at[i, 'Дт с/ка'] = " + ".join(matching_debit_accounts)
+                        matches_found += 1
+                        print(f"Multiple proportional matches found for Doc #{credit_doc_num}, Date: {credit_date_str}, Amount: {credit_amount}: {' + '.join(matching_debit_accounts)}")
+                    continue
+            
+            # Check for sum of debit operations that match the credit amount
+            debit_ops = [op for op in rival_group if not pd.isna(op['debit_account'])]
+            if debit_ops:
+                # Group debit operations by debit account
+                debit_by_account = {}
+                for op in debit_ops:
+                    debit_acct = str(op['debit_account'])
+                    if debit_acct not in debit_by_account:
+                        debit_by_account[debit_acct] = []
+                    debit_by_account[debit_acct].append(op)
+                
+                # For each debit account, check if its total matches our credit amount
+                for debit_acct, ops in debit_by_account.items():
+                    total_amount = sum(op['amount'] for op in ops)
+                    if abs(total_amount - credit_amount) < 0.01:
+                        updated_credit_df.at[i, 'Дт с/ка'] = debit_acct
+                        matches_found += 1
+                        print(f"Proportional sum match found for Doc #{credit_doc_num}, Date: {credit_date_str}, Amount: {credit_amount}: {debit_acct}")
+                        break
+                else:
+                    # No exact match, try individual matching
+                    continue
+            else:
+                # No debit operations found, try individual matching
+                continue
+        
+        # Try direct matching if proportional matching didn't succeed
         # Look for matches in the Rival file
         matches = rival_df[
-            (rival_df['doc_number'] == credit_doc_num) & 
-            (rival_df['date'].dt.date == credit_date.date()) & 
+            (rival_df['doc_number'] == credit_doc_num) &
+            (rival_df['date'].dt.date == credit_date_obj) &
             (abs(rival_df['amount'] - credit_amount) < 0.01) &
             (rival_df['credit_account'] == credit_acct)
         ]
@@ -163,17 +240,17 @@ def match_accounts(credit_df, rival_df):
                 # Single match
                 updated_credit_df.at[i, 'Дт с/ка'] = matching_debit_accounts[0]
                 matches_found += 1
-                print(f"Match found for Doc #{credit_doc_num}, Date: {credit_date_str}, Amount: {credit_amount}: {matching_debit_accounts[0]}")
+                print(f"Direct match found for Doc #{credit_doc_num}, Date: {credit_date_str}, Amount: {credit_amount}: {matching_debit_accounts[0]}")
             elif len(matching_debit_accounts) > 1:
                 # Multiple matches - combine accounts
                 updated_credit_df.at[i, 'Дт с/ка'] = " + ".join(matching_debit_accounts)
                 matches_found += 1
-                print(f"Multiple matches found for Doc #{credit_doc_num}, Date: {credit_date_str}, Amount: {credit_amount}: {' + '.join(matching_debit_accounts)}")
+                print(f"Multiple direct matches found for Doc #{credit_doc_num}, Date: {credit_date_str}, Amount: {credit_amount}: {' + '.join(matching_debit_accounts)}")
         else:
             # Try a more relaxed search without the credit account constraint
             relaxed_matches = rival_df[
-                (rival_df['doc_number'] == credit_doc_num) & 
-                (rival_df['date'].dt.date == credit_date.date()) & 
+                (rival_df['doc_number'] == credit_doc_num) &
+                (rival_df['date'].dt.date == credit_date_obj) &
                 (abs(rival_df['amount'] - credit_amount) < 0.01)
             ]
             

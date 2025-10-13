@@ -367,10 +367,23 @@ class RivalParser(BaseExcelParser):
             # We use the same operations as both source and reference, as some operations will have
             # complete account information while others might be missing accounts
             try:
+                missing_debit_before = sum(1 for op in operations if not op.get('debit_account') or op.get('debit_account') is None or str(op.get('debit_account', '')) == 'nan')
+                missing_credit_before = sum(1 for op in operations if not op.get('credit_account') or op.get('credit_account') is None or str(op.get('credit_account', '')) == 'nan')
+                
+                print(f"[INFO] Before matching: {missing_debit_before} operations missing debit accounts, {missing_credit_before} missing credit accounts")
+                
                 operations = self.account_matcher.match_rival_accounts(operations, operations)
+                
+                missing_debit_after = sum(1 for op in operations if not op.get('debit_account') or op.get('debit_account') is None or str(op.get('debit_account', '')) == 'nan')
+                missing_credit_after = sum(1 for op in operations if not op.get('credit_account') or op.get('credit_account') is None or str(op.get('credit_account', '')) == 'nan')
+                
                 print(f"[INFO] Account matching applied to {len(operations)} operations")
+                print(f"[INFO] After matching: {missing_debit_after} operations missing debit accounts, {missing_credit_after} missing credit accounts")
+                print(f"[INFO] Filled: {missing_debit_before - missing_debit_after} debit accounts, {missing_credit_before - missing_credit_after} credit accounts")
             except Exception as e:
                 print(f"[WARNING] Error during account matching: {str(e)}")
+                import traceback
+                traceback.print_exc()
             
             # If grouping didn't produce any operations, fall back to the old method
             if not operations:
@@ -487,10 +500,23 @@ class RivalParser(BaseExcelParser):
             # We use the same operations as both source and reference, as some operations will have
             # complete account information while others might be missing accounts
             try:
+                missing_debit_before = sum(1 for op in operations if not op.get('debit_account') or op.get('debit_account') is None or str(op.get('debit_account', '')) == 'nan')
+                missing_credit_before = sum(1 for op in operations if not op.get('credit_account') or op.get('credit_account') is None or str(op.get('credit_account', '')) == 'nan')
+                
+                print(f"[INFO] Before matching: {missing_debit_before} operations missing debit accounts, {missing_credit_before} missing credit accounts")
+                
                 operations = self.account_matcher.match_rival_accounts(operations, operations)
+                
+                missing_debit_after = sum(1 for op in operations if not op.get('debit_account') or op.get('debit_account') is None or str(op.get('debit_account', '')) == 'nan')
+                missing_credit_after = sum(1 for op in operations if not op.get('credit_account') or op.get('credit_account') is None or str(op.get('credit_account', '')) == 'nan')
+                
                 print(f"[INFO] Account matching applied to {len(operations)} operations")
+                print(f"[INFO] After matching: {missing_debit_after} operations missing debit accounts, {missing_credit_after} missing credit accounts")
+                print(f"[INFO] Filled: {missing_debit_before - missing_debit_after} debit accounts, {missing_credit_before - missing_credit_after} credit accounts")
             except Exception as e:
                 print(f"[WARNING] Error during account matching: {str(e)}")
+                import traceback
+                traceback.print_exc()
             
             # If grouping didn't produce any operations, fall back to the old method
             if not operations:

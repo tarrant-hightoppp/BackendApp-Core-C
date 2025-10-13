@@ -31,6 +31,18 @@ class FileProcessor:
             # TemplateType.BUSINESS_NAVIGATOR: BusinessNavigatorParser(),
             # TemplateType.UNIVERSUM: UniversumParser(),
         }
+        
+    def _filter_internal_fields(self, operation_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Filter out internal fields (starting with underscore) from operation data
+        
+        Args:
+            operation_data: Dictionary containing operation data
+            
+        Returns:
+            Filtered dictionary without internal fields
+        """
+        return {k: v for k, v in operation_data.items() if not k.startswith('_')}
     
     def create_file(self, filename: str, template_type: str, file_path: str, import_uuid: str) -> UploadedFile:
         """
@@ -108,8 +120,9 @@ class FileProcessor:
                     # Print the operation data for debugging (commented out to reduce log verbosity)
                     # print(f"[DEBUG] Creating operation with data: file_id={file_id}, debit={operation_data.get('debit_account')}, credit={operation_data.get('credit_account')}, amount={operation_data.get('amount')}")
                     
-                    # Create the operation object
-                    operation = AccountingOperation(**operation_data)
+                    # Filter out internal fields and create the operation object
+                    filtered_data = self._filter_internal_fields(operation_data)
+                    operation = AccountingOperation(**filtered_data)
                     self.db.add(operation)
                     saved_operations.append(operation)
                 except Exception as op_error:
@@ -138,7 +151,9 @@ class FileProcessor:
                         if 'import_uuid' not in operation_data or operation_data['import_uuid'] is None:
                             operation_data['import_uuid'] = file_record.import_uuid
                         
-                        operation = AccountingOperation(**operation_data)
+                        # Filter out internal fields and create the operation object
+                        filtered_data = self._filter_internal_fields(operation_data)
+                        operation = AccountingOperation(**filtered_data)
                         self.db.add(operation)
                         self.db.flush()
                     

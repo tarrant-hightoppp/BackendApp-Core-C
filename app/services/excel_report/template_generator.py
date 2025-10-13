@@ -91,7 +91,7 @@ class TemplateGenerator:
             # Approach section
             15: 20.25, 16: 20.25, 17: 20.25, 18: 20.25,
             # Operations header
-            26: 30.0,
+            26: 41,
             #Footer \\^.^//
             72: 30, 74: 30, 79: 30,84: 35,
         }
