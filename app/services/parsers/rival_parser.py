@@ -4,10 +4,16 @@ from datetime import datetime
 from io import BytesIO
 
 from app.services.parsers.base_parser import BaseExcelParser
+from app.services.account_matcher import AccountMatcher
 
 
 class RivalParser(BaseExcelParser):
     """Parser for Rival Excel format"""
+    
+    def __init__(self):
+        """Initialize the Rival parser with account matcher service"""
+        super().__init__()
+        self.account_matcher = AccountMatcher()
     
     def _group_related_operations(self, rows: List[pd.Series], company_info: Dict[str, Any], file_id: int, import_uuid: str = None) -> List[Dict[str, Any]]:
         """
@@ -354,7 +360,17 @@ class RivalParser(BaseExcelParser):
                     valid_rows.append(row)
             
             # Group related rows and create complete operations
+            # First pass: Group related operations
             operations = self._group_related_operations(valid_rows, company_info, file_id, import_uuid)
+            
+            # Pre-processing: Match and fill missing accounts using the AccountMatcher service
+            # We use the same operations as both source and reference, as some operations will have
+            # complete account information while others might be missing accounts
+            try:
+                operations = self.account_matcher.match_rival_accounts(operations, operations)
+                print(f"[INFO] Account matching applied to {len(operations)} operations")
+            except Exception as e:
+                print(f"[WARNING] Error during account matching: {str(e)}")
             
             # If grouping didn't produce any operations, fall back to the old method
             if not operations:
@@ -464,8 +480,17 @@ class RivalParser(BaseExcelParser):
                 if not pd.isna(row.iloc[14]) and (not pd.isna(row.iloc[12]) or not pd.isna(row.iloc[13])):
                     valid_rows.append(row)
             
-            # Group related rows and create complete operations
+            # First pass: Group related operations
             operations = self._group_related_operations(valid_rows, company_info, file_id, import_uuid)
+            
+            # Pre-processing: Match and fill missing accounts using the AccountMatcher service
+            # We use the same operations as both source and reference, as some operations will have
+            # complete account information while others might be missing accounts
+            try:
+                operations = self.account_matcher.match_rival_accounts(operations, operations)
+                print(f"[INFO] Account matching applied to {len(operations)} operations")
+            except Exception as e:
+                print(f"[WARNING] Error during account matching: {str(e)}")
             
             # If grouping didn't produce any operations, fall back to the old method
             if not operations:
