@@ -358,7 +358,88 @@ class TestAccountingOperationProcessor(unittest.TestCase):
         # Verify that the total of filtered operations is >= 80% of total
         filtered_amount = sum(op.amount for op in filtered_operations)
         self.assertGreaterEqual(filtered_amount / total_amount, 0.8)
-    
+
+    @patch('app.services.accounting_operation_processor.S3Service')
+    def test_filter_operations_with_zero_amounts(self, mock_s3_service):
+        """Test that operations with amount=0 are always included in filtered operations"""
+        # Setup mock S3Service
+        mock_s3_instance = MagicMock()
+        mock_s3_service.return_value = mock_s3_instance
+        
+        # Create an instance of the processor
+        processor = AccountingOperationProcessor(self.db)
+        
+        # Create a set of operations with varying amounts, including zero amounts
+        operations = []
+        
+        # Create 5 operations with non-zero amounts
+        for i in range(5):
+            op = AccountingOperation(
+                file_id=self.file1_id,
+                operation_date=date(2023, 1, 1),
+                document_type="Invoice",
+                document_number=f"INV-{i+1}",
+                debit_account="999",
+                credit_account="888",
+                amount=(i+1) * 1000,  # 1000, 2000, 3000, 4000, 5000
+                description=f"Non-zero operation {i+1}",
+                template_type="test",
+                import_uuid=self.import_uuid
+            )
+            operations.append(op)
+        
+        # Create 3 operations with zero amounts
+        for i in range(3):
+            op = AccountingOperation(
+                file_id=self.file1_id,
+                operation_date=date(2023, 1, 2),
+                document_type="Adjustment",
+                document_number=f"ADJ-{i+1}",
+                debit_account="777",
+                credit_account="666",
+                amount=0,  # Zero amount
+                description=f"Zero-sum operation {i+1}",
+                template_type="test",
+                import_uuid=self.import_uuid
+            )
+            operations.append(op)
+        
+        # Add 25 small operations to trigger the 80% rule
+        for i in range(25):
+            op = AccountingOperation(
+                file_id=self.file1_id,
+                operation_date=date(2023, 1, 3),
+                document_type="Invoice",
+                document_number=f"SMALL-{i+1}",
+                debit_account="555",
+                credit_account="444",
+                amount=100,  # Small amount
+                description=f"Small operation {i+1}",
+                template_type="test",
+                import_uuid=self.import_uuid
+            )
+            operations.append(op)
+        
+        # We should have 33 operations total (5 large + 3 zero-sum + 25 small)
+        self.assertEqual(len(operations), 33)
+        
+        # Filter operations using the statistical approach
+        filtered_operations = processor._filter_operations(operations, audit_approach="statistical")
+        
+        # Verify that all zero-sum operations are included
+        zero_sum_ops = [op for op in operations if op.amount == 0]
+        self.assertEqual(len(zero_sum_ops), 3)
+        
+        # Check if all zero-sum operations are in the filtered results
+        filtered_zero_ops = [op for op in filtered_operations if op.amount == 0]
+        self.assertEqual(len(filtered_zero_ops), 3)
+        
+        # Verify that the non-zero operations are filtered by the 80/20 rule
+        # The total of the 5 large operations (15000) is more than 80% of the total non-zero amount
+        # (15000 + 25*100 = 17500, and 80% of 17500 is 14000)
+        non_zero_filtered = [op for op in filtered_operations if op.amount > 0]
+        self.assertEqual(len(non_zero_filtered), 5)  # Should include just the 5 large operations
+        
     @patch('app.services.accounting_operation_processor.S3Service')
     def test_api_endpoint(self, mock_s3_service):
         """Test the API endpoint for processing imports"""

@@ -13,7 +13,9 @@ class TemplateGenerator:
         company_name: str = "Форт България ЕООД",
         year: Optional[str] = None,
         auditor_name: str = "ПРИМА ФИНАНС КОНСУЛТИНГ ЕООД",
-        audit_approach: str = "statistical"
+        audit_approach: str = "full",
+        account_number: str = "*номер на счетоводната сметка*",
+        operation_count: int = 0
     ) -> Workbook:
         """
         Create a new workbook with the C700 template structure
@@ -23,6 +25,8 @@ class TemplateGenerator:
             year: Year to include in the template (default: current year)
             auditor_name: Name of the auditor company
             audit_approach: The audit approach to use (default: "statistical")
+            account_number: The account number being analyzed (default: "*номер на счетоводната сметка*")
+                           This is used in the header to indicate which account is being audited
             
         Returns:
             Workbook object with the template structure
@@ -60,17 +64,19 @@ class TemplateGenerator:
         
         # Set column widths - match the exact widths from the template
         column_widths = {
-            'A': 15.43,   # № по ред
-            'B': 22.14,  # Документ №/Дата
-            'C': 10.0,   # Рег. №
-            'D': 10.0,   # Дт с/ка
-            'E': 25.71,  # Аналитична сметка (Дт)
-            'F': 10.0,   # Кт с/ка
-            'G': 25.71,  # Аналитична сметка (Кт)
-            'H': 15.0,   # Сума
-            'I': 30.0,   # Обяснение/Обоснование
-            'J': 15.0,   # Установена сума при одита
-            'K': 15.0,   # Отклонение
+            'A': 10.0,    # № по ред
+            'B': 15.0,    # Вид документ
+            'C': 15.0,    # Документ №
+            'D': 12.0,    # Дата
+            'E': 10.0,    # Дт с/ка
+            'F': 25.71,   # Аналитична сметка/Партньор (Дт)
+            'G': 10.0,    # Кт с/ка
+            'H': 25.71,   # Аналитична сметка/Партньор (Кт)
+            'I': 15.0,    # Сума
+            'J': 30.0,    # Обяснение/Обоснование
+            'K': 15.0,    # Установена сума при одита
+            'L': 15.0,    # Отклонение
+            'M': 20.0,    # Установено контролно действие при одита
         }
         
         for col, width in column_widths.items():
@@ -151,8 +157,8 @@ class TemplateGenerator:
         # Row 1
         ws['A1'] = "ОДИТЪТ СЕ ИЗВЪРШВА ОТ"
         ws['B1'] = auditor_name
-        ws['D1'] = "ДОКУМЕНТ"
-        ws['F1'] = "С 700  Тест  по  същество  на   приходи"
+        ws['D1'] = f"ДОКУМЕНТ"
+        ws['F1'] = f"С 700  Тест по същество и на контроли на {account_number} сметка"
         
         # Row 2
         ws['A2'] = "АДРЕС"
@@ -174,7 +180,7 @@ class TemplateGenerator:
         
         # Row 5
         ws['A5'] = "ДИПЛОМА НОМЕР"
-        ws['B5'] = "409"
+        ws['B5'] = "0409"
         ws['D5'] = "ПРОВЕРЯВАН ПЕРИОД"
         ws['F5'] = year
         
@@ -189,8 +195,8 @@ class TemplateGenerator:
         ws['D7'] = "ПРОВЕРИЛ (ОТГОВОРЕН ОДИТОР)"
         
         # Row 8
-        ws['A8'] = "ИС"
-        ws['D8'] = "ВК"
+        ws['A8'] = "Иляна Сидери"
+        ws['D8'] = "Васил Калайджиев"
         
         # Apply styles to header section - teal background for header rows
         for row in range(1, 9):
@@ -205,9 +211,9 @@ class TemplateGenerator:
                     cell.border = border
                 cell.fill = teal_fill  # Apply teal background to header rows
         
-        # Audit purpose section - merge cells for all columns A-G
+        # Audit purpose section - merge cells for all columns A-M
         for row in range(9, 14):
-            ws.merge_cells(f'A{row}:G{row}')
+            ws.merge_cells(f'A{row}:M{row}')
         
         # Audit purpose section - content
         ws['A9'] = "Цел   на одиторската  процедура "
@@ -225,11 +231,11 @@ class TemplateGenerator:
         
         # Approach section - merge cells
         # Row 15 - header
-        ws.merge_cells('C15:G15')
+        ws.merge_cells('C15:M15')
         
         # Rows 16-18 - options
         for row in range(16, 19):
-            ws.merge_cells(f'C{row}:G{row}')
+            ws.merge_cells(f'C{row}:M{row}')
         
         # Approach section - content
         ws['C15'] = "  Избран подход за тест по  същество "
@@ -273,9 +279,10 @@ class TemplateGenerator:
         
         # Table header for operations - row 26
         headers = [
-            "Документ №/Дата", "Рег. №", "Дт с/ка", "Аналитична сметка",
-            "Кт с/ка", "Аналитична сметка", "Сума", "Обяснителен текст",
-            "Установена сума   при одита ", "Отклонение  "
+            "Вид документ", "Документ №", "Дата", "Дт с/ка",
+            "Аналитична сметка/Партньор", "Кт с/ка", "Аналитична сметка/Партньор",
+            "Сума", "Обяснение/Обоснование", "Установена сума при одита",
+            "Отклонение", "Установено контролно действие при одита"
         ]
         
         # Add column headers for operations table (row 26)
@@ -287,25 +294,27 @@ class TemplateGenerator:
             cell.border = border
             cell.fill = teal_fill  # Use teal color for the operations header row
             
-        # Add empty rows for operations
-        # For "full" audit approach, we need more rows - allocate 500 rows to be safe
-        max_row = 500 if audit_approach == "full" else 71
+        # Add empty rows for operations based on actual operation count
+        # Use operation_count if provided, otherwise use default based on audit approach
+        if operation_count > 0:
+            # Add rows for operations plus some buffer for subtotals and spacing
+            max_row = 27 + operation_count + 5
+        else:
+            # Fallback to previous behavior if operation_count not provided
+            max_row = 500 if audit_approach == "full" else 71
+        
+        # Create empty bordered rows for operations
         for row in range(27, max_row):
-            for col in range(1, 12):
+            for col in range(1, 14):
                 cell = ws.cell(row=row, column=col)
                 cell.border = border
         
         # Add conclusion section headers
-        # For "full" audit approach, the conclusion section starts after the operations
+        # The conclusion section starts right after the operations section
         conclusion_start_row = max_row
         
         # Create the conclusion table header
-        ws.merge_cells(f'A{conclusion_start_row}:K{conclusion_start_row}')
-        
-        # Merge A-B for the label columns
-        for i in range(1, 15):
-            row = conclusion_start_row + i
-            ws.merge_cells(f'A{row}:B{row}')
+        ws.merge_cells(f'A{conclusion_start_row}:M{conclusion_start_row}')
         
         # Conclusion section content - headers only (values will be populated dynamically)
         ws[f'A{conclusion_start_row}'] = "ЗАКЛЮЧЕНИЯ :"
@@ -314,16 +323,16 @@ class TemplateGenerator:
         ws[f'A{conclusion_start_row+3}'] = "Равнение на  ст/ст на популация с оборотна ведомости; глава  книга ; ФО "
         ws[f'A{conclusion_start_row+4}'] = "Проектиране на грешката "
         ws[f'A{conclusion_start_row+5}'] = "Проектиране на грешката "
-        ws[f'C{conclusion_start_row+5}'] = "НЕПРИЛОЖИМО"
+        # Note: Don't set a value for C here as it will be merged and set in ConclusionGenerator
         ws[f'A{conclusion_start_row+6}'] = ""
         ws[f'A{conclusion_start_row+7}'] = ""
         ws[f'A{conclusion_start_row+8}'] = "Констатирани  СНОН "
-        ws[f'C{conclusion_start_row+8}'] = "Не са констатирани съществени неточности, отклонения и несъответствия при осчетоводяване на продажбите."
+        # Note: Don't set a value for C here as it will be merged and set in ConclusionGenerator
         ws[f'A{conclusion_start_row+13}'] = "Други  заключения "
         
         # Apply styles to conclusion section - with proper formatting
         # Header row (ЗАКЛЮЧЕНИЯ) with improved formatting
-        for col in range(1, 12):
+        for col in range(1, 14):
             cell = ws.cell(row=conclusion_start_row, column=col)
             cell.font = Font(name='Calibri', size=12, bold=True)  # Slightly larger font
             cell.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')  # Center align
@@ -334,7 +343,7 @@ class TemplateGenerator:
         for i in range(1, 20):  # Format 20 rows after conclusion header
             row = conclusion_start_row + i
             
-            # Format label column (A-B merged)
+            # Format label column (was previously A-C merged, now handled in ConclusionGenerator)
             label_cell = ws.cell(row=row, column=1)
             if not label_cell.font:
                 label_cell.font = normal_font
@@ -357,8 +366,8 @@ class TemplateGenerator:
                 label_cell.fill = light_gray_fill
                 label_cell.font = Font(name='Calibri', size=11, bold=True)
             
-            # Format content cells (C-K) - individual cells for each account
-            for col in range(3, 12):
+            # Format content cells (D-M) - individual cells for each account
+            for col in range(4, 14):
                 cell = ws.cell(row=row, column=col)
                 if not cell.font:
                     cell.font = normal_font

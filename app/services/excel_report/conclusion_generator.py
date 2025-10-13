@@ -71,6 +71,14 @@ class ConclusionGenerator:
         total_operations: int,
         total_amount: float
     ):
+        # Merge A-C for the label columns in the conclusion section
+        # This was previously done in template_generator.py but moved here to avoid conflicts
+        for i in range(1, 15):
+            row = conclusion_start_row + i
+            try:
+                template_sheet.merge_cells(f'A{row}:C{row}')
+            except:
+                pass
         """
         Populate the conclusion section of the template with account totals
         

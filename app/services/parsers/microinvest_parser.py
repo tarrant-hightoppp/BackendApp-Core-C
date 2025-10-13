@@ -131,10 +131,11 @@ class MicroinvestParser(BaseExcelParser):
                 # Try to get amount - this might be in different columns or need calculation
                 # print(f"[DEBUG] Getting amount for row {idx}")
                 amount = self._get_amount(row, amount_col)
-                if amount is None or amount == 0:
+                if amount is None:
                     # If no amount found, skip this row
                     # print(f"[DEBUG] Skipping row {idx} - no valid amount found")
                     continue
+                # Keep operations with amount 0 - they're important for auditing
                 # print(f"[DEBUG] Found amount for row {idx}: {amount}")
                 
                 # Get other fields
@@ -301,7 +302,7 @@ class MicroinvestParser(BaseExcelParser):
                     continue
                 
                 amount = self.clean_numeric(val)
-                if amount is not None and amount > 0:
+                if amount is not None:
                     # print(f"Found amount in exact match column {col}: {amount}")
                     return amount
             except Exception as e:
@@ -318,7 +319,7 @@ class MicroinvestParser(BaseExcelParser):
                         continue
                     
                     amount = self.clean_numeric(val)
-                    if amount is not None and amount > 0:
+                    if amount is not None:
                         # print(f"Found amount in keyword match column {col}: {amount}")
                         return amount
                 except Exception as e:

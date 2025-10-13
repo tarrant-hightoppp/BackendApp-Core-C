@@ -243,9 +243,13 @@ class TemplateDetector:
         """
         Check if the file matches the Rival template pattern
         
-        Rival: колона 1 вид документ, колона 2 номер на документ, дата, име, дебит, кредит, сума, обяснение
+        Rival structure:
+        - Rows 1, 2, 4, 5, 6 have merged cells from column A to K (header information)
+        - Rows 8 and 9 are merged and form the header of the data table
+        - Actual data starts at row 10
+        - Column structure: вид документ, номер на документ, дата, име, дебит, кредит, сума, обяснение
         
-        Note: Rival template typically has ~7 rows of metadata before the actual table header
+        Note: Rival template typically has ~7-9 rows of metadata before the actual table header
         This is specific to Rival templates only - we don't skip rows for other template types
         """
         print("[DEBUG] Inside _check_rival_pattern - looking for header row")
@@ -301,12 +305,38 @@ class TemplateDetector:
         # If not found in headers, try to find the actual header row by scanning data rows
         # THIS IS RIVAL-SPECIFIC BEHAVIOR: We only scan for headers beyond row 7 for Rival
         try:
-            # For Rival specifically, we expect ~7 rows of metadata before the actual header
-            # Get the first ~15 rows of the dataframe to scan for header
-            # If df has fewer rows, we'll work with what we have
+            # For Rival specifically, we expect metadata in rows 1-7 with merged cells
+            # The header is typically in rows 8-9 (merged)
+            # And data starts at row 10
             max_rows_to_check = min(15, len(df))
             
-            print(f"[DEBUG] RIVAL-SPECIFIC: Scanning rows 7-{max_rows_to_check} for potential Rival header (skipping first 7 rows of metadata)")
+            print(f"[DEBUG] RIVAL-SPECIFIC: Scanning rows 7-{max_rows_to_check} for potential Rival header (merged cells in rows 8-9)")
+            
+            # First, check for the merged cell pattern - in Rival files, the header rows
+            # typically have fewer non-empty cells than data rows due to merged cells
+            if len(df) >= 9:
+                merged_pattern_detected = True
+                merged_cell_rows = [0, 1, 3, 4, 5]  # 0-indexed rows 1, 2, 4, 5, 6
+                
+                for i in merged_cell_rows:
+                    if i < len(df):
+                        non_empty_cells = sum(1 for val in df.iloc[i].values if not pd.isna(val))
+                        # If the row has many non-empty cells, it's likely not a merged header row
+                        if non_empty_cells > 5:
+                            merged_pattern_detected = False
+                            break
+                
+                if merged_pattern_detected:
+                    print("[DEBUG] Detected potential Rival merged cell pattern in header rows")
+                    # Look specifically at rows 7-8 (index 7-8) which should be the merged header
+                    for i in [7, 8]:
+                        if i < len(df):
+                            row_values = [str(val).lower() for val in df.iloc[i].values if not pd.isna(val)]
+                            header_keywords = ["вид", "документ", "номер", "дата", "дебит", "кредит", "сума", "обяснение"]
+                            matches = sum(any(keyword in val for keyword in header_keywords) for val in row_values)
+                            if matches >= 4:  # If we find at least 4 header keywords
+                                print(f"[DEBUG] Found strong Rival header pattern at row {i+1} with merged cell structure")
+                                return True
             
             # RIVAL-SPECIFIC: Skip the first 7 rows as they are typically metadata
             # Check rows 7+ to see if they could be a header row

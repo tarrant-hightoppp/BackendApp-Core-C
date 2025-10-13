@@ -240,6 +240,7 @@ class AccountingOperationProcessor:
           - If <= min_operations operations, include all operations (100%)
           - If > min_operations operations, include operations that make up the specified threshold
             of total amount (sorted by amount in descending order - largest transactions first)
+          - Always include operations with amount equal to 0, as they're important for auditing
         
         This implements the business rule that for accounts with many transactions,
         we focus on the most significant ones that represent a specified percentage of the financial value.
@@ -262,12 +263,16 @@ class AccountingOperationProcessor:
         # If we have min_operations or fewer operations, include all of them
         if len(operations) <= min_operations:
             return operations
-            
-        # Sort operations by amount (descending) to prioritize largest transactions
-        sorted_operations = sorted(operations, key=lambda x: x.amount, reverse=True)
         
-        # Calculate total amount across all operations
-        total_amount = sum(op.amount for op in operations)
+        # Always include operations with amount = 0
+        zero_operations = [op for op in operations if op.amount == 0]
+        non_zero_operations = [op for op in operations if op.amount != 0]
+        
+        # Sort non-zero operations by amount (descending) to prioritize largest transactions
+        sorted_operations = sorted(non_zero_operations, key=lambda x: x.amount, reverse=True)
+        
+        # Calculate total amount across all non-zero operations
+        total_amount = sum(op.amount for op in non_zero_operations)
         
         # Calculate the 80% threshold amount - handle Decimal vs float
         try:
@@ -294,27 +299,35 @@ class AccountingOperationProcessor:
             total_amount = float(total_amount)
             threshold = total_amount * threshold_percentage
         
-        # Select operations until reaching the 80% threshold
-        filtered_operations = []
+        # Select non-zero operations until reaching the 80% threshold
+        filtered_non_zero_operations = []
         cumulative_amount = 0
         
-        for operation in sorted_operations:
-            filtered_operations.append(operation)
-            
-            # Handle Decimal arithmetic consistently
-            op_amount = operation.amount
-            
-            # Make sure we're adding compatible types
-            if isinstance(cumulative_amount, Decimal) and not isinstance(op_amount, Decimal):
-                op_amount = Decimal(str(op_amount))
-            elif not isinstance(cumulative_amount, Decimal) and isinstance(op_amount, Decimal):
-                cumulative_amount = Decimal(str(cumulative_amount))
+        # If total_amount is 0 (all operations are 0 or we've filtered them all out),
+        # we'll include all non-zero operations
+        if total_amount == 0 or not non_zero_operations:
+            filtered_non_zero_operations = non_zero_operations
+        else:
+            for operation in sorted_operations:
+                filtered_non_zero_operations.append(operation)
                 
-            cumulative_amount += op_amount
-            
-            # Once we reach or exceed 80% of the total value, we can stop
-            if cumulative_amount >= threshold:
-                break
+                # Handle Decimal arithmetic consistently
+                op_amount = operation.amount
+                
+                # Make sure we're adding compatible types
+                if isinstance(cumulative_amount, Decimal) and not isinstance(op_amount, Decimal):
+                    op_amount = Decimal(str(op_amount))
+                elif not isinstance(cumulative_amount, Decimal) and isinstance(op_amount, Decimal):
+                    cumulative_amount = Decimal(str(cumulative_amount))
+                    
+                cumulative_amount += op_amount
+                
+                # Once we reach or exceed 80% of the total value, we can stop
+                if cumulative_amount >= threshold:
+                    break
+        
+        # Combine zero-amount operations with filtered non-zero operations
+        filtered_operations = zero_operations + filtered_non_zero_operations
         
         # For percentage calculation, make sure we're using compatible types
         try:
@@ -329,7 +342,9 @@ class AccountingOperationProcessor:
             percentage_str = "unknown%"
             
         print(f"Filtered operations: {len(filtered_operations)} of {len(operations)} "
-              f"representing {percentage_str} of total amount")
+              f"({len(zero_operations)} zero-sum operations included automatically, "
+              f"plus {len(filtered_non_zero_operations)} non-zero operations "
+              f"representing {percentage_str} of total amount)")
                 
         return filtered_operations
     
@@ -478,13 +493,29 @@ class AccountingOperationProcessor:
             company_name = "Форт България ЕООД"  # Default
             year = None
             
-            # Try to extract year from operations
+            # Try to extract company info and year from operations
             if operations and len(operations) > 0:
                 # Get the year from the first operation's date
                 if operations[0].operation_date:
                     year = str(operations[0].operation_date.year)
+                
+                # Extract company information if available (from Rival files)
+                if hasattr(operations[0], 'company_info') and operations[0].company_info:
+                    # If we have company info from the Rival file, use it
+                    company_info = operations[0].company_info
+                    if company_info.get('company_name'):
+                        company_name = company_info.get('company_name')
+                        print(f"[INFO] Using company name from Rival file: {company_name}")
+                elif hasattr(operations[0], 'raw_data') and isinstance(operations[0].raw_data, dict):
+                    # Try to extract from raw data if it's a dictionary
+                    raw_data = operations[0].raw_data
+                    if raw_data.get('company_info') and raw_data['company_info'].get('company_name'):
+                        company_name = raw_data['company_info'].get('company_name')
+                        print(f"[INFO] Using company name from raw data: {company_name}")
             
             # Wrap the Excel file with the template
+            # The operation count will be automatically determined by the template wrapper
+            # from the Excel data, which contains exactly the filtered operations
             wrapped_excel = self.template_wrapper.wrap_excel_with_template(
                 excel_buffer,
                 company_name=company_name,

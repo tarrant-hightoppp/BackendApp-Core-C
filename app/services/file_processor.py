@@ -38,7 +38,7 @@ class FileProcessor:
         
         Args:
             filename: Original filename
-            template_type: Detected template type
+            template_type: Detected template type (e.g., RIVAL, AJUR, etc.)
             file_path: Path where the file is stored
             import_uuid: UUID for grouping files in an import
             
