@@ -9,7 +9,7 @@ from sqlalchemy import func
 from app.models.operation import AccountingOperation
 from app.models.file import UploadedFile
 from app.services.s3 import S3Service
-from app.services.excel_template_wrapper import ExcelTemplateWrapper
+from app.services.excel_report import ExcelTemplateWrapper
 
 
 class AccountingOperationProcessor:
