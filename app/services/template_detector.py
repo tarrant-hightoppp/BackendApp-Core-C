@@ -417,7 +417,10 @@ class TemplateDetector:
         """
         Check if the file matches the AJUR template pattern
         
-        AJUR: вид, номер, дата, дебит, аналитична, кредит, аналитична, сума, обяснение
+        AJUR:
+        - Common headers: Потр., Опер. No, Дата рег., Вид док., Документ No / дата, Рег. No,
+          Дт с/ка, Аналитична сметка, Кт с/ка, Аналитична сметка, Сума, Обяснителен текст
+        - Distinctive structure: Each row is a complete accounting operation
         
         Note: Unlike Rival, we don't skip header rows for AJUR templates
         """
@@ -428,10 +431,35 @@ class TemplateDetector:
             "установено при одита",
             "отклонение",
             "тествани на контролни действия",
-            "установено наличие на контролно действие при одита"
+            "установено наличие на контролно действие при одита",
+            "потр.",
+            "опер. no",
+            "дата рег.",
+            "обяснителен текст на друг език"
         ]
         
-        # Check first 5 rows for any of these strong indicators
+        # Check headers first for distinctive AJUR patterns
+        ajur_header_patterns = [
+            "потр.", "опер. no", "дата рег.", "вид док", "документ no / дата", "рег. no",
+            "дт с/ка", "кт с/ка", "аналитична сметка", "сума", "обяснителен текст"
+        ]
+        
+        header_matches = 0
+        for pattern in ajur_header_patterns:
+            for header in headers:
+                if pattern in header.lower():
+                    print(f"[DEBUG] Found AJUR header pattern '{pattern}' in '{header}'")
+                    header_matches += 1
+                    break
+        
+        print(f"[DEBUG] Found {header_matches} AJUR header patterns")
+        
+        # If we have a significant number of header matches (at least 5), this is likely AJUR
+        if header_matches >= 5:
+            print(f"[DEBUG] Detected AJUR by header patterns: {header_matches} matches")
+            return True
+        
+        # Check first 5 rows for any of the strong indicators
         for i in range(min(5, len(df))):
             row_values = [str(val).lower() for val in df.iloc[i].values if not pd.isna(val)]
             row_text = ' '.join(row_values)
@@ -446,41 +474,64 @@ class TemplateDetector:
                             print(f"[DEBUG] Found confirming AJUR keyword '{keyword}'")
                             return True
         
+        # Check for specific column pattern seen in the sample file
+        # The sample has a very specific column structure
+        if len(df.columns) >= 25:  # AJUR typically has many columns (25+ in sample file)
+            # Look for amount column - in sample file it's at position 24
+            amount_col_idx = 24 if len(df.columns) > 24 else len(df.columns) - 1
+            description_col_idx = 25 if len(df.columns) > 25 else len(df.columns) - 1
+            
+            # Examine a few rows to see if they match AJUR pattern
+            for i in range(min(5, len(df))):
+                try:
+                    # Check if we have numeric amounts in the expected column
+                    amount_val = df.iloc[i, amount_col_idx]
+                    if isinstance(amount_val, (int, float)) and not pd.isna(amount_val) and amount_val > 0:
+                        # Also check if we have account numbers in expected columns
+                        debit_col_idx = 6  # Дт с/ка in sample
+                        credit_col_idx = 15  # Кт с/ка in sample
+                        
+                        debit_val = df.iloc[i, debit_col_idx] if debit_col_idx < len(df.columns) else None
+                        credit_val = df.iloc[i, credit_col_idx] if credit_col_idx < len(df.columns) else None
+                        
+                        if (isinstance(debit_val, str) and '/' in debit_val) or \
+                           (isinstance(credit_val, str) and '/' in credit_val):
+                            print(f"[DEBUG] Found AJUR pattern in data: accounts with '/' format and amount")
+                            return True
+                except Exception as e:
+                    print(f"[DEBUG] Error checking AJUR data pattern: {e}")
+                    pass
+        
         # If no strong indicators were found, do a more standard check
         # Update expected keywords to match the actual headers (case-insensitive)
-        expected_keywords = ["№",
-                             "дата рег",
-                             "вид док",
-                             "документ no / дата",
-                             "рег. no",
-                             "дт с/ка",
-                             "аналитична сметка",
-                             "кт с/ка",
-                             "количество",
-                             "мярка",
-                             "сума",
-                             "обяснителен текст",
-                             "установено при одита",
-                             "отклонение",
-                             "тествани на контролни действия",
-                             "установено наличие  на контролно действие   при одита",
-                             ]
+        expected_keywords = ["потр",
+                          "опер. no",
+                          "дата рег",
+                          "вид док",
+                          "документ no / дата",
+                          "рег. no",
+                          "дт с/ка",
+                          "аналитична сметка",
+                          "кт с/ка",
+                          "количество",
+                          "мярка",
+                          "сума",
+                          "обяснителен текст",
+                          "установено при одита",
+                          "отклонение",
+                          "тествани на контролни действия",
+                          "установено наличие  на контролно действие   при одита",
+                          "системна дата",
+                          ]
         
         print(f"[DEBUG] Expected Ajur keywords: {expected_keywords}")
         
-        # Check for the specific pattern
-        # Make the check case-insensitive by comparing lowercase versions
-        has_vid_dok = any("вид док" in h.lower() for h in headers)
-        print(f"[DEBUG] Has 'вид док' in headers (case-insensitive): {has_vid_dok}")
-        
-        # Check for keyword matches
-        keyword_matches = self._check_keywords_in_headers(headers, expected_keywords, min_matches=16)
+        # Check for keyword matches with a reduced threshold (8 instead of 16)
+        # This makes the detection more flexible
+        keyword_matches = self._check_keywords_in_headers(headers, expected_keywords, min_matches=8)
         print(f"[DEBUG] Ajur keyword matches result: {keyword_matches}")
         
-        result = has_vid_dok and keyword_matches
-        print(f"[DEBUG] Ajur pattern match result: {result}")
-        
-        return result
+        return keyword_matches
     
     def _check_microinvest_pattern(self, df: pd.DataFrame, headers: List[str]) -> bool:
         """

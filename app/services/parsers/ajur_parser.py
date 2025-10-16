@@ -47,58 +47,139 @@ class AjurParser(BaseExcelParser):
             column_map = self._detect_columns(df)
             print(f"[DEBUG] AJUR parser - Detected column mapping: {column_map}")
             
+            # Force correct credit column for AJUR format if incorrectly detected
+            if column_map.get('credit') == 16 and len(df.columns) > 15:
+                # Check if column 15 is actually "Кт с/ка"
+                if 'кт' in str(df.columns[15]).lower() and 'с/ка' in str(df.columns[15]).lower():
+                    print(f"[DEBUG] AJUR parser - Correcting credit column from 16 to 15")
+                    column_map['credit'] = 15
+            
             # Fix column detection based on actual column names for AJUR format
             if column_map['amount'] == 0 or column_map['amount'] is None:
                 print(f"[DEBUG] AJUR parser - Trying to find better column mappings from DataFrame columns")
                 # Check for specific column names that match the AJUR format
                 for i, col_name in enumerate(df.columns):
                     col_str = str(col_name).lower().strip()
-                    if 'сума' in col_str:
+                    
+                    # Specific checks for the Ajur format in the sample file
+                    if 'потр' in col_str:  # "Потр." column (user/operator identifier)
+                        print(f"[DEBUG] AJUR parser - Found operator column by name: {col_name} at index {i}")
+                        column_map['operator'] = i
+                    elif 'опер' in col_str and ('no' in col_str or '№' in col_str):  # "Опер. No" column
+                        print(f"[DEBUG] AJUR parser - Found operation number column by name: {col_name} at index {i}")
+                        column_map['operation_number'] = i
+                        column_map['sequence_number'] = i  # Also use it as sequence number
+                    elif 'сума' in col_str:
                         print(f"[DEBUG] AJUR parser - Found amount column by name: {col_name} at index {i}")
                         column_map['amount'] = i
-                    elif 'дт' in col_str and 'с/ка' in col_str:
-                        print(f"[DEBUG] AJUR parser - Found debit column by name: {col_name} at index {i}")
+                    elif 'дт' in col_str and 'с/ка' in col_str and 'аналитична' not in col_str:
+                        print(f"[DEBUG] AJUR parser - Found MAIN debit column (Дт с/ка) by name: {col_name} at index {i}")
                         column_map['debit'] = i
-                    elif 'кт' in col_str and 'с/ка' in col_str:
-                        print(f"[DEBUG] AJUR parser - Found credit column by name: {col_name} at index {i}")
+                        # This is the EXACT main account (Дт с/ка) column that we need to audit
+                        print(f"[DEBUG] AJUR parser - Main debit account for audit found at {i}")
+                    elif 'кт' in col_str and 'с/ка' in col_str and 'аналитична' not in col_str:
+                        print(f"[DEBUG] AJUR parser - Found MAIN credit column (Кт с/ка) by name: {col_name} at index {i}")
                         column_map['credit'] = i
-                    elif 'дата' in col_str:
-                        print(f"[DEBUG] AJUR parser - Found date column by name: {col_name} at index {i}")
+                        # This is the EXACT main account (Кт с/ка) column that we need to audit
+                        print(f"[DEBUG] AJUR parser - Main credit account for audit found at {i}")
+                    elif 'дата' in col_str and 'рег' in col_str:  # "Дата рег." column
+                        print(f"[DEBUG] AJUR parser - Found registration date column by name: {col_name} at index {i}")
                         column_map['date'] = i
+                    elif 'дата' in col_str:
+                        # Only set date if we haven't found a more specific one
+                        if column_map['date'] is None:
+                            print(f"[DEBUG] AJUR parser - Found date column by name: {col_name} at index {i}")
+                            column_map['date'] = i
                     elif 'вид' in col_str and 'док' in col_str:
                         print(f"[DEBUG] AJUR parser - Found doc_type column by name: {col_name} at index {i}")
                         column_map['doc_type'] = i
-                    elif 'документ' in col_str or ('no' in col_str and 'дата' in col_str):
+                    elif 'документ' in col_str and ('no' in col_str or 'дата' in col_str):
                         print(f"[DEBUG] AJUR parser - Found doc_number column by name: {col_name} at index {i}")
                         column_map['doc_number'] = i
-                    elif 'аналитична' in col_str and 'сметка' in col_str and column_map['analytical_debit'] is None:
-                        print(f"[DEBUG] AJUR parser - Found analytical_debit column by name: {col_name} at index {i}")
-                        column_map['analytical_debit'] = i
-                    elif 'аналитична' in col_str and 'сметка' in col_str and column_map['analytical_debit'] is not None:
-                        print(f"[DEBUG] AJUR parser - Found analytical_credit column by name: {col_name} at index {i}")
-                        column_map['analytical_credit'] = i
+                    elif 'аналитична' in col_str and 'сметка' in col_str:
+                        # If we've already found the debit account but not the analytical debit
+                        if column_map['debit'] is not None and column_map['analytical_debit'] is None and i > column_map['debit']:
+                            print(f"[DEBUG] AJUR parser - Found analytical_debit column by name: {col_name} at index {i}")
+                            column_map['analytical_debit'] = i
+                        # If we've already found the credit account but not the analytical credit
+                        elif column_map['credit'] is not None and column_map['analytical_credit'] is None and i > column_map['credit']:
+                            print(f"[DEBUG] AJUR parser - Found analytical_credit column by name: {col_name} at index {i}")
+                            column_map['analytical_credit'] = i
+                        # If we haven't found analytical_debit yet
+                        elif column_map['analytical_debit'] is None:
+                            print(f"[DEBUG] AJUR parser - Found analytical_debit column by name: {col_name} at index {i}")
+                            column_map['analytical_debit'] = i
+                        # If we've found analytical_debit but not analytical_credit
+                        elif column_map['analytical_credit'] is None:
+                            print(f"[DEBUG] AJUR parser - Found analytical_credit column by name: {col_name} at index {i}")
+                            column_map['analytical_credit'] = i
                     elif 'обяснителен' in col_str or 'текст' in col_str:
                         print(f"[DEBUG] AJUR parser - Found description column by name: {col_name} at index {i}")
                         column_map['description'] = i
             
-            # If still not found, use hardcoded values for standard AJUR format
+            # If still not found, use hardcoded values for this specific AJUR format from the sample file
             if column_map['amount'] == 0 or column_map['amount'] is None:
-                # Look for column 12 (index) which is the typical AJUR 'Сума' column
-                if len(df.columns) >= 13:
-                    print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for 'Сума' at index 12")
+                # In the sample file, 'Сума' is at column 24
+                if len(df.columns) >= 25:
+                    print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for 'Сума' at index 24")
+                    column_map['amount'] = 24
+                # Fall back to older format if needed
+                elif len(df.columns) >= 13:
+                    print(f"[DEBUG] AJUR parser - Using older default AJUR column mapping for 'Сума' at index 12")
                     column_map['amount'] = 12
             
-            if column_map['debit'] is None and len(df.columns) >= 6:
-                print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for 'Дт с/ка' at index 5")
-                column_map['debit'] = 5
+            if column_map['debit'] is None:
+                # In the sample file, 'Дт с/ка' is at column 6 - THIS IS THE MAIN ACCOUNT COLUMN TO AUDIT
+                if len(df.columns) >= 7:
+                    print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for main debit 'Дт с/ка' at index 6")
+                    column_map['debit'] = 6
+                    # Print headers around this position for verification
+                    for j in range(max(0, 6-2), min(len(df.columns), 6+3)):
+                        print(f"[DEBUG] Column {j}: {df.columns[j]}")
+                elif len(df.columns) >= 6:
+                    print(f"[DEBUG] AJUR parser - Using older default AJUR column mapping for 'Дт с/ка' at index 5")
+                    column_map['debit'] = 5
                 
-            if column_map['credit'] is None and len(df.columns) >= 9:
-                print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for 'Кт с/ка' at index 8")
-                column_map['credit'] = 8
+            if column_map['credit'] is None:
+                # In the sample file, 'Кт с/ка' is at column 15 - THIS IS THE MAIN ACCOUNT COLUMN TO AUDIT
+                if len(df.columns) >= 16:
+                    print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for main credit 'Кт с/ка' at index 15")
+                    column_map['credit'] = 15
+                    # Print headers around this position for verification
+                    for j in range(max(0, 15-2), min(len(df.columns), 15+3)):
+                        print(f"[DEBUG] Column {j}: {df.columns[j]}")
+                elif len(df.columns) >= 9:
+                    print(f"[DEBUG] AJUR parser - Using older default AJUR column mapping for 'Кт с/ка' at index 8")
+                    column_map['credit'] = 8
                 
-            if column_map['date'] is None and len(df.columns) >= 2:
-                print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for 'Дата' at index 1")
-                column_map['date'] = 1
+            if column_map['date'] is None:
+                # In the sample file, 'Дата рег.' is at column 2
+                if len(df.columns) >= 3:
+                    print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for 'Дата рег.' at index 2")
+                    column_map['date'] = 2
+                elif len(df.columns) >= 2:
+                    print(f"[DEBUG] AJUR parser - Using older default AJUR column mapping for 'Дата' at index 1")
+                    column_map['date'] = 1
+                    
+            if column_map['analytical_debit'] is None and len(df.columns) >= 8:
+                print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for analytical debit at index 7")
+                column_map['analytical_debit'] = 7
+                
+            if column_map['analytical_credit'] is None and len(df.columns) >= 17:
+                print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for analytical credit at index 16")
+                column_map['analytical_credit'] = 16
+                
+            if column_map['doc_type'] is None and len(df.columns) >= 4:
+                print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for document type at index 3")
+                column_map['doc_type'] = 3
+                
+            if column_map['doc_number'] is None and len(df.columns) >= 5:
+                print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for document number at index 4")
+                column_map['doc_number'] = 4
+                
+            if column_map['description'] is None and len(df.columns) >= 26:
+                print(f"[DEBUG] AJUR parser - Using default AJUR column mapping for description at index 25")
+                column_map['description'] = 25
             
             # Skip header rows if necessary
             # Detect the start of actual data
@@ -175,18 +256,38 @@ class AjurParser(BaseExcelParser):
                         else:
                             continue
                     
-                    # Extract values with index safety checks
+                    # Extract values with index safety checks - FOCUSED ON MAIN ACCOUNTS WE SHOULD AUDIT
                     amount_value = row.iloc[amount_idx] if amount_idx is not None and amount_idx < len(row) else None
-                    debit_value = row.iloc[debit_idx] if debit_idx is not None and debit_idx < len(row) else None
-                    credit_value = row.iloc[credit_idx] if credit_idx is not None and credit_idx < len(row) else None
                     
-                    if idx % 100 == 0:  # Reduce verbosity
-                        print(f"[DEBUG] AJUR parser - Raw values: amount={amount_value}, debit={debit_value}, credit={credit_value}")
+                    # Extract Дт с/ка - THE EXACT MAIN DEBIT ACCOUNT WE NEED FOR AUDITING
+                    debit_value = None
+                    if debit_idx is not None and debit_idx < len(row):
+                        debit_value = row.iloc[debit_idx]
+                        if idx < 3:  # Debug first few rows
+                            print(f"[DEBUG] AJUR parser - Row {idx} extracted from Дт с/ка column ({debit_idx}): '{debit_value}'")
+                    
+                    # Extract Кт с/ка - THE EXACT MAIN CREDIT ACCOUNT WE NEED FOR AUDITING
+                    credit_value = None
+                    if credit_idx is not None and credit_idx < len(row):
+                        credit_value = row.iloc[credit_idx]
+                        if idx < 3:  # Debug first few rows
+                            print(f"[DEBUG] AJUR parser - Row {idx} extracted from Кт с/ка column ({credit_idx}): '{credit_value}'")
+                    
+                    # Log every credit_value for debugging, especially in the first few rows
+                    if idx < 10 or idx % 100 == 0:  # Log first 10 rows and then every 100th row
+                        print(f"[DEBUG] AJUR parser - Row {idx} Raw values: amount={amount_value}, debit={debit_value}, credit={credit_value}")
+                        print(f"[DEBUG] AJUR parser - Credit column index: {credit_idx}, Type: {type(credit_value)}")
                     
                     # Skip rows that don't have amount or both debit and credit accounts
                     if pd.isna(amount_value) or (pd.isna(debit_value) and pd.isna(credit_value)):
-                        if idx % 100 == 0:  # Reduce log noise
+                        if idx < 10 or idx % 100 == 0:  # More detailed logging for troubleshooting
                             print(f"[DEBUG] AJUR parser - Skipping row {idx} - missing required data")
+                            if pd.isna(amount_value):
+                                print(f"[DEBUG] AJUR parser - Amount is NaN/None")
+                            if pd.isna(debit_value):
+                                print(f"[DEBUG] AJUR parser - Debit is NaN/None")
+                            if pd.isna(credit_value):
+                                print(f"[DEBUG] AJUR parser - Credit is NaN/None")
                         continue
                     
                     # Extract other fields using the column map
@@ -210,13 +311,19 @@ class AjurParser(BaseExcelParser):
                         row.iloc[doc_num_idx] if doc_num_idx is not None and doc_num_idx < len(row) else None
                     )
                     
+                    # Process main debit account (Дт с/ка) - CRITICAL FOR AUDITING
                     debit_account = self.clean_string(debit_value)
+                    if idx < 5 or idx % 50 == 0:  # Log frequently for verification
+                        print(f"[DEBUG] AJUR parser - Row {idx} MAIN DEBIT ACCOUNT (Дт с/ка): '{debit_account}'")
                     
                     analytical_debit = self.clean_string(
                         row.iloc[analytical_debit_idx] if analytical_debit_idx is not None and analytical_debit_idx < len(row) else None
                     )
                     
+                    # Process main credit account (Кт с/ка) - CRITICAL FOR AUDITING
                     credit_account = self.clean_string(credit_value)
+                    if idx < 5 or idx % 50 == 0:  # Log frequently for verification
+                        print(f"[DEBUG] AJUR parser - Row {idx} MAIN CREDIT ACCOUNT (Кт с/ка): '{credit_account}'")
                     
                     analytical_credit = self.clean_string(
                         row.iloc[analytical_credit_idx] if analytical_credit_idx is not None and analytical_credit_idx < len(row) else None
@@ -260,9 +367,14 @@ class AjurParser(BaseExcelParser):
                         row.iloc[desc_idx] if desc_idx is not None and desc_idx < len(row) else None
                     )
                     
-                    # Skip if we don't have a valid date or amount
+                    # Skip if we don't have a valid date or amount or account info
                     if not operation_date or not amount:
                         print(f"[DEBUG] AJUR parser - Skipping row {idx} - missing date or amount")
+                        continue
+                    
+                    # Ensure we have at least one account
+                    if not debit_account and not credit_account:
+                        print(f"[DEBUG] AJUR parser - Skipping row {idx} - missing both debit and credit accounts")
                         continue
                 except Exception as extract_error:
                     print(f"[DEBUG] AJUR parser - Error extracting data from row {idx}: {str(extract_error)}")
@@ -306,7 +418,10 @@ class AjurParser(BaseExcelParser):
                 }
                 
                 operations.append(operation)
-                print(f"[DEBUG] AJUR parser - Successfully added operation from row {idx}")
+                if idx < 10 or len(operations) % 20 == 0:
+                    print(f"[DEBUG] AJUR parser - Successfully added operation from row {idx}")
+                    print(f"[DEBUG] AJUR parser - Operation details: Date={operation_date}, Type={document_type}, Amount={amount}")
+                    print(f"[DEBUG] AJUR parser - Accounts: Debit={debit_account}, Credit={credit_account}")
             
             print(f"[DEBUG] AJUR parser - Total operations extracted: {len(operations)}")
             return operations
@@ -345,58 +460,133 @@ class AjurParser(BaseExcelParser):
             column_map = self._detect_columns(df)
             print(f"[DEBUG] AJUR parser (memory) - Detected column mapping: {column_map}")
             
+            # Force correct credit column for AJUR format if incorrectly detected
+            if column_map.get('credit') == 16 and len(df.columns) > 15:
+                # Check if column 15 is actually "Кт с/ка"
+                if 'кт' in str(df.columns[15]).lower() and 'с/ка' in str(df.columns[15]).lower():
+                    print(f"[DEBUG] AJUR parser (memory) - Correcting credit column from 16 to 15")
+                    column_map['credit'] = 15
+            
             # Fix column detection based on actual column names for AJUR format
             if column_map['amount'] == 0 or column_map['amount'] is None:
                 print(f"[DEBUG] AJUR parser (memory) - Trying to find better column mappings from DataFrame columns")
                 # Check for specific column names that match the AJUR format
                 for i, col_name in enumerate(df.columns):
                     col_str = str(col_name).lower().strip()
-                    if 'сума' in col_str:
+                    
+                    # Specific checks for the Ajur format in the sample file
+                    if 'потр' in col_str:  # "Потр." column (user/operator identifier)
+                        print(f"[DEBUG] AJUR parser (memory) - Found operator column by name: {col_name} at index {i}")
+                        column_map['operator'] = i
+                    elif 'опер' in col_str and ('no' in col_str or '№' in col_str):  # "Опер. No" column
+                        print(f"[DEBUG] AJUR parser (memory) - Found operation number column by name: {col_name} at index {i}")
+                        column_map['operation_number'] = i
+                        column_map['sequence_number'] = i  # Also use it as sequence number
+                    elif 'сума' in col_str:
                         print(f"[DEBUG] AJUR parser (memory) - Found amount column by name: {col_name} at index {i}")
                         column_map['amount'] = i
-                    elif 'дт' in col_str and 'с/ка' in col_str:
-                        print(f"[DEBUG] AJUR parser (memory) - Found debit column by name: {col_name} at index {i}")
+                    elif 'дт' in col_str and 'с/ка' in col_str and 'аналитична' not in col_str:
+                        print(f"[DEBUG] AJUR parser (memory) - Found MAIN debit column (Дт с/ка) by name: {col_name} at index {i}")
                         column_map['debit'] = i
-                    elif 'кт' in col_str and 'с/ка' in col_str:
-                        print(f"[DEBUG] AJUR parser (memory) - Found credit column by name: {col_name} at index {i}")
+                        # This is the EXACT main account (Дт с/ка) column that we need to audit
+                        print(f"[DEBUG] AJUR parser (memory) - Main debit account for audit found at {i}")
+                    elif 'кт' in col_str and 'с/ка' in col_str and 'аналитична' not in col_str:
+                        print(f"[DEBUG] AJUR parser (memory) - Found MAIN credit column (Кт с/ка) by name: {col_name} at index {i}")
                         column_map['credit'] = i
-                    elif 'дата' in col_str:
-                        print(f"[DEBUG] AJUR parser (memory) - Found date column by name: {col_name} at index {i}")
+                        # This is the EXACT main account (Кт с/ка) column that we need to audit
+                        print(f"[DEBUG] AJUR parser (memory) - Main credit account for audit found at {i}")
+                    elif 'дата' in col_str and 'рег' in col_str:  # "Дата рег." column
+                        print(f"[DEBUG] AJUR parser (memory) - Found registration date column by name: {col_name} at index {i}")
                         column_map['date'] = i
+                    elif 'дата' in col_str:
+                        # Only set date if we haven't found a more specific one
+                        if column_map['date'] is None:
+                            print(f"[DEBUG] AJUR parser (memory) - Found date column by name: {col_name} at index {i}")
+                            column_map['date'] = i
                     elif 'вид' in col_str and 'док' in col_str:
                         print(f"[DEBUG] AJUR parser (memory) - Found doc_type column by name: {col_name} at index {i}")
                         column_map['doc_type'] = i
-                    elif 'документ' in col_str or ('no' in col_str and 'дата' in col_str):
+                    elif 'документ' in col_str and ('no' in col_str or 'дата' in col_str):
                         print(f"[DEBUG] AJUR parser (memory) - Found doc_number column by name: {col_name} at index {i}")
                         column_map['doc_number'] = i
-                    elif 'аналитична' in col_str and 'сметка' in col_str and column_map['analytical_debit'] is None:
-                        print(f"[DEBUG] AJUR parser (memory) - Found analytical_debit column by name: {col_name} at index {i}")
-                        column_map['analytical_debit'] = i
-                    elif 'аналитична' in col_str and 'сметка' in col_str and column_map['analytical_debit'] is not None:
-                        print(f"[DEBUG] AJUR parser (memory) - Found analytical_credit column by name: {col_name} at index {i}")
-                        column_map['analytical_credit'] = i
+                    elif 'аналитична' in col_str and 'сметка' in col_str:
+                        # If we've already found the debit account but not the analytical debit
+                        if column_map['debit'] is not None and column_map['analytical_debit'] is None and i > column_map['debit']:
+                            print(f"[DEBUG] AJUR parser (memory) - Found analytical_debit column by name: {col_name} at index {i}")
+                            column_map['analytical_debit'] = i
+                        # If we've already found the credit account but not the analytical credit
+                        elif column_map['credit'] is not None and column_map['analytical_credit'] is None and i > column_map['credit']:
+                            print(f"[DEBUG] AJUR parser (memory) - Found analytical_credit column by name: {col_name} at index {i}")
+                            column_map['analytical_credit'] = i
+                        # If we haven't found analytical_debit yet
+                        elif column_map['analytical_debit'] is None:
+                            print(f"[DEBUG] AJUR parser (memory) - Found analytical_debit column by name: {col_name} at index {i}")
+                            column_map['analytical_debit'] = i
+                        # If we've found analytical_debit but not analytical_credit
+                        elif column_map['analytical_credit'] is None:
+                            print(f"[DEBUG] AJUR parser (memory) - Found analytical_credit column by name: {col_name} at index {i}")
+                            column_map['analytical_credit'] = i
                     elif 'обяснителен' in col_str or 'текст' in col_str:
                         print(f"[DEBUG] AJUR parser (memory) - Found description column by name: {col_name} at index {i}")
                         column_map['description'] = i
             
-            # If still not found, use hardcoded values for standard AJUR format
+            # If still not found, use hardcoded values for this specific AJUR format from the sample file
             if column_map['amount'] == 0 or column_map['amount'] is None:
-                # Look for column 12 (index) which is the typical AJUR 'Сума' column
-                if len(df.columns) >= 13:
-                    print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for 'Сума' at index 12")
+                # In the sample file, 'Сума' is at column 24
+                if len(df.columns) >= 25:
+                    print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for 'Сума' at index 24")
+                    column_map['amount'] = 24
+                # Fall back to older format if needed
+                elif len(df.columns) >= 13:
+                    print(f"[DEBUG] AJUR parser (memory) - Using older default AJUR column mapping for 'Сума' at index 12")
                     column_map['amount'] = 12
             
-            if column_map['debit'] is None and len(df.columns) >= 6:
-                print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for 'Дт с/ка' at index 5")
-                column_map['debit'] = 5
+            if column_map['debit'] is None:
+                # In the sample file, 'Дт с/ка' is at column 6
+                if len(df.columns) >= 7:
+                    print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for 'Дт с/ка' at index 6")
+                    column_map['debit'] = 6
+                elif len(df.columns) >= 6:
+                    print(f"[DEBUG] AJUR parser (memory) - Using older default AJUR column mapping for 'Дт с/ка' at index 5")
+                    column_map['debit'] = 5
                 
-            if column_map['credit'] is None and len(df.columns) >= 9:
-                print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for 'Кт с/ка' at index 8")
-                column_map['credit'] = 8
+            if column_map['credit'] is None:
+                # In the sample file, 'Кт с/ка' is at column 15
+                if len(df.columns) >= 16:
+                    print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for 'Кт с/ка' at index 15")
+                    column_map['credit'] = 15
+                elif len(df.columns) >= 9:
+                    print(f"[DEBUG] AJUR parser (memory) - Using older default AJUR column mapping for 'Кт с/ка' at index 8")
+                    column_map['credit'] = 8
                 
-            if column_map['date'] is None and len(df.columns) >= 2:
-                print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for 'Дата' at index 1")
-                column_map['date'] = 1
+            if column_map['date'] is None:
+                # In the sample file, 'Дата рег.' is at column 2
+                if len(df.columns) >= 3:
+                    print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for 'Дата рег.' at index 2")
+                    column_map['date'] = 2
+                elif len(df.columns) >= 2:
+                    print(f"[DEBUG] AJUR parser (memory) - Using older default AJUR column mapping for 'Дата' at index 1")
+                    column_map['date'] = 1
+                    
+            if column_map['analytical_debit'] is None and len(df.columns) >= 8:
+                print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for analytical debit at index 7")
+                column_map['analytical_debit'] = 7
+                
+            if column_map['analytical_credit'] is None and len(df.columns) >= 17:
+                print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for analytical credit at index 16")
+                column_map['analytical_credit'] = 16
+                
+            if column_map['doc_type'] is None and len(df.columns) >= 4:
+                print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for document type at index 3")
+                column_map['doc_type'] = 3
+                
+            if column_map['doc_number'] is None and len(df.columns) >= 5:
+                print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for document number at index 4")
+                column_map['doc_number'] = 4
+                
+            if column_map['description'] is None and len(df.columns) >= 26:
+                print(f"[DEBUG] AJUR parser (memory) - Using default AJUR column mapping for description at index 25")
+                column_map['description'] = 25
             
             # Skip header rows if necessary
             # Detect the start of actual data
@@ -478,13 +668,21 @@ class AjurParser(BaseExcelParser):
                     debit_value = row.iloc[debit_idx] if debit_idx is not None and debit_idx < len(row) else None
                     credit_value = row.iloc[credit_idx] if credit_idx is not None and credit_idx < len(row) else None
                     
-                    if idx % 100 == 0:  # Reduce verbosity
-                        print(f"[DEBUG] AJUR parser (memory) - Raw values: amount={amount_value}, debit={debit_value}, credit={credit_value}")
+                    # Log every credit_value for debugging, especially in the first few rows
+                    if idx < 10 or idx % 100 == 0:  # Log first 10 rows and then every 100th row
+                        print(f"[DEBUG] AJUR parser (memory) - Row {idx} Raw values: amount={amount_value}, debit={debit_value}, credit={credit_value}")
+                        print(f"[DEBUG] AJUR parser (memory) - Credit column index: {credit_idx}, Type: {type(credit_value)}")
                     
                     # Skip rows that don't have amount or both debit and credit accounts
                     if pd.isna(amount_value) or (pd.isna(debit_value) and pd.isna(credit_value)):
-                        if idx % 100 == 0:  # Reduce log noise
+                        if idx < 10 or idx % 100 == 0:  # More detailed logging for troubleshooting
                             print(f"[DEBUG] AJUR parser (memory) - Skipping row {idx} - missing required data")
+                            if pd.isna(amount_value):
+                                print(f"[DEBUG] AJUR parser (memory) - Amount is NaN/None")
+                            if pd.isna(debit_value):
+                                print(f"[DEBUG] AJUR parser (memory) - Debit is NaN/None")
+                            if pd.isna(credit_value):
+                                print(f"[DEBUG] AJUR parser (memory) - Credit is NaN/None")
                         continue
                     
                     # Extract other fields using the column map
@@ -514,7 +712,10 @@ class AjurParser(BaseExcelParser):
                         row.iloc[analytical_debit_idx] if analytical_debit_idx is not None and analytical_debit_idx < len(row) else None
                     )
                     
+                    # Process main credit account (Кт с/ка) - CRITICAL FOR AUDITING
                     credit_account = self.clean_string(credit_value)
+                    if idx < 5 or idx % 50 == 0:  # Log frequently for verification
+                        print(f"[DEBUG] AJUR parser (memory) - Row {idx} MAIN CREDIT ACCOUNT (Кт с/ка): '{credit_account}'")
                     
                     analytical_credit = self.clean_string(
                         row.iloc[analytical_credit_idx] if analytical_credit_idx is not None and analytical_credit_idx < len(row) else None
@@ -558,9 +759,14 @@ class AjurParser(BaseExcelParser):
                         row.iloc[desc_idx] if desc_idx is not None and desc_idx < len(row) else None
                     )
                     
-                    # Skip if we don't have a valid date or amount
+                    # Skip if we don't have a valid date or amount or account info
                     if not operation_date or not amount:
                         print(f"[DEBUG] AJUR parser (memory) - Skipping row {idx} - missing date or amount")
+                        continue
+                    
+                    # Ensure we have at least one account
+                    if not debit_account and not credit_account:
+                        print(f"[DEBUG] AJUR parser (memory) - Skipping row {idx} - missing both debit and credit accounts")
                         continue
                 except Exception as extract_error:
                     print(f"[DEBUG] AJUR parser (memory) - Error extracting data from row {idx}: {str(extract_error)}")
@@ -604,7 +810,10 @@ class AjurParser(BaseExcelParser):
                 }
                 
                 operations.append(operation)
-                print(f"[DEBUG] AJUR parser (memory) - Successfully added operation from row {idx}")
+                if idx < 10 or len(operations) % 20 == 0:
+                    print(f"[DEBUG] AJUR parser (memory) - Successfully added operation from row {idx}")
+                    print(f"[DEBUG] AJUR parser (memory) - Operation details: Date={operation_date}, Type={document_type}, Amount={amount}")
+                    print(f"[DEBUG] AJUR parser (memory) - Accounts: Debit={debit_account}, Credit={credit_account}")
             
             print(f"[DEBUG] AJUR parser (memory) - Total operations extracted: {len(operations)}")
             return operations
@@ -652,9 +861,9 @@ class AjurParser(BaseExcelParser):
                     column_map['doc_number'] = col_idx
                 elif any(keyword in val for keyword in ["дата", "date"]):
                     column_map['date'] = col_idx
-                elif "дебит" in val or "дт" in val or "dt" in val or "debit" in val:
+                elif ("дебит" in val or "дт" in val or "dt" in val or "debit" in val) and "аналитична" not in val:
                     column_map['debit'] = col_idx
-                elif "кредит" in val or "кт" in val or "kt" in val or "credit" in val:
+                elif ("кредит" in val or "кт" in val or "kt" in val or "credit" in val) and "аналитична" not in val:
                     column_map['credit'] = col_idx
                 elif any(keyword in val for keyword in ["сума", "amount", "value", "стойност"]):
                     column_map['amount'] = col_idx
