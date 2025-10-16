@@ -71,14 +71,6 @@ class ConclusionGenerator:
         total_operations: int,
         total_amount: float
     ):
-        # Merge A-C for the label columns in the conclusion section
-        # This was previously done in template_generator.py but moved here to avoid conflicts
-        for i in range(1, 15):
-            row = conclusion_start_row + i
-            try:
-                template_sheet.merge_cells(f'A{row}:C{row}')
-            except:
-                pass
         """
         Populate the conclusion section of the template with account totals
         
@@ -102,74 +94,112 @@ class ConclusionGenerator:
         
         # Add a summary row before the conclusion section
         summary_row = conclusion_start_row - 3
+        
+        # Merge cells A-M for the summary header
+        try:
+            template_sheet.merge_cells(f'A{summary_row}:M{summary_row}')
+        except:
+            pass
+            
         CellUtils.safe_set_cell_value(
             template_sheet,
             summary_row,
             1,
             "ОБОБЩЕНА СТАТИСТИКА:",
-            font=Font(name='Calibri', size=12, bold=True),
-            alignment=Alignment(wrap_text=True, vertical='center')
+            font=Font(name='Calibri', size=48, bold=True),
+            alignment=Alignment(wrap_text=True, vertical='center', horizontal='center')
         )
         
+        # Merge cells A-M for the summary content row
+        try:
+            template_sheet.merge_cells(f'A{summary_row+1}:M{summary_row+1}')
+        except:
+            pass
+            
         CellUtils.safe_set_cell_value(
             template_sheet,
             summary_row+1,
             1,
-            f"Общ брой операции: {total_operations}",
-            font=Font(name='Calibri', size=11)
+            f"Общ брой операции: {total_operations}     |     Обща сума: {total_amount:.2f} лв.",
+            font=Font(name='Calibri', size=14, bold=True),
+            alignment=Alignment(horizontal='center', vertical='center')
         )
+        
+        # Merge cells A-M for the first few rows and populate with account summaries
+        accounts = list(total_by_account.keys())
+        
+        # Row 1: Checked documents total
+        try:
+            template_sheet.merge_cells(f'A{conclusion_start_row+1}:M{conclusion_start_row+1}')
+        except:
+            pass
+        
+        account_summary_text = ""
+        for i, account in enumerate(accounts[:4]):
+            total = total_by_account[account]
+            if i > 0:
+                account_summary_text += "; "
+            account_summary_text += f"Обща сума проверени документи по Кт на {account} - {total:.2f} лв."
         
         CellUtils.safe_set_cell_value(
             template_sheet,
-            summary_row+1,
-            4,
-            f"Обща сума: {total_amount:.2f} лв.",
-            font=Font(name='Calibri', size=11),
-            alignment=Alignment(horizontal='left')
+            conclusion_start_row+1,
+            1,
+            account_summary_text,
+            orange_fill,
+            Alignment(wrap_text=True, vertical='center', horizontal='center'),
+            border_style
         )
         
-        # Create a table-like structure for the conclusion that starts from column A
-        # Process up to 4 accounts
-        accounts = list(total_by_account.keys())
+        # Row 2: Total sum by account
+        try:
+            template_sheet.merge_cells(f'A{conclusion_start_row+2}:M{conclusion_start_row+2}')
+        except:
+            pass
+            
+        account_totals_text = ""
         for i, account in enumerate(accounts[:4]):
             total = total_by_account[account]
+            if i > 0:
+                account_totals_text += "; "
+            account_totals_text += f"Обща сума по Кт на {account} - {total:.2f}лв."
+        
+        CellUtils.safe_set_cell_value(
+            template_sheet,
+            conclusion_start_row+2,
+            1,
+            account_totals_text,
+            orange_fill,
+            Alignment(wrap_text=True, vertical='center', horizontal='center'),
+            border_style
+        )
+        
+        # Row 3: Verification statement
+        try:
+            template_sheet.merge_cells(f'A{conclusion_start_row+3}:M{conclusion_start_row+3}')
+        except:
+            pass
             
-            # Row 1: Checked documents total
-            CellUtils.safe_set_cell_value(
-                template_sheet,
-                conclusion_start_row+1,
-                i+1,
-                f"Обща сума проверени документи по Кт на {account} - {total:.2f} лв.",
-                orange_fill,
-                Alignment(wrap_text=True, vertical='center'),
-                border_style
-            )
-            
-            # Row 2: Total sum by account
-            CellUtils.safe_set_cell_value(
-                template_sheet,
-                conclusion_start_row+2,
-                i+1,
-                f"Обща сума по Кт на {account} - {total:.2f}лв.",
-                orange_fill,
-                Alignment(wrap_text=True, vertical='center'),
-                border_style
-            )
-            
-            # Row 3: Verification statement
-            CellUtils.safe_set_cell_value(
-                template_sheet,
-                conclusion_start_row+3,
-                i+1,
-                "Стойността се равнява на тази по Об.ведомост и Гл.кн.",
-                orange_fill,
-                Alignment(wrap_text=True, vertical='center'),
-                border_style
-            )
+        CellUtils.safe_set_cell_value(
+            template_sheet,
+            conclusion_start_row+3,
+            1,
+            "Стойността се равнява на тази по Об.ведомост и Гл.кн.",
+            orange_fill,
+            Alignment(wrap_text=True, vertical='center', horizontal='center'),
+            border_style
+        )
+        
+        # Merge cells for rows 4, 6, 7, 9-12 (empty or placeholder rows)
+        for row_offset in [4, 6, 7, 9, 10, 11, 12]:
+            try:
+                template_sheet.merge_cells(f'A{conclusion_start_row+row_offset}:M{conclusion_start_row+row_offset}')
+            except:
+                pass
         
         # Set the "НЕПРИЛОЖИМО" text in a merged cell for the error projection section
         try:
-            template_sheet.merge_cells(f'A{conclusion_start_row+5}:K{conclusion_start_row+5}')
+            template_sheet.merge_cells(f'A{conclusion_start_row+5}:M{conclusion_start_row+5}')
         except:
             pass
         
@@ -179,13 +209,13 @@ class ConclusionGenerator:
             1,
             "НЕПРИЛОЖИМО",
             orange_fill,
-            Alignment(wrap_text=True, vertical='center'),
+            Alignment(wrap_text=True, vertical='center', horizontal='center'),
             border_style
         )
         
         # Set the СНОН text in a merged cell
         try:
-            template_sheet.merge_cells(f'A{conclusion_start_row+8}:K{conclusion_start_row+8}')
+            template_sheet.merge_cells(f'A{conclusion_start_row+8}:M{conclusion_start_row+8}')
         except:
             pass
         
@@ -195,6 +225,6 @@ class ConclusionGenerator:
             1,
             "Не са констатирани съществени неточности, отклонения и несъответствия при осчетоводяване на продажбите.",
             orange_fill,
-            Alignment(wrap_text=True, vertical='center'),
+            Alignment(wrap_text=True, vertical='center', horizontal='center'),
             border_style
         )

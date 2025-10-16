@@ -93,7 +93,7 @@ class TemplateGenerator:
             # Operations header
             26: 41,
             #Footer \\^.^//
-            72: 30, 74: 30, 79: 30,84: 35,
+          
         }
         
         # Set specific row heights
@@ -323,11 +323,11 @@ class TemplateGenerator:
         ws[f'A{conclusion_start_row+3}'] = "Равнение на  ст/ст на популация с оборотна ведомости; глава  книга ; ФО "
         ws[f'A{conclusion_start_row+4}'] = "Проектиране на грешката "
         ws[f'A{conclusion_start_row+5}'] = "Проектиране на грешката "
-        # Note: Don't set a value for C here as it will be merged and set in ConclusionGenerator
+        # Note: These will be merged from A to M in ConclusionGenerator
         ws[f'A{conclusion_start_row+6}'] = ""
         ws[f'A{conclusion_start_row+7}'] = ""
         ws[f'A{conclusion_start_row+8}'] = "Констатирани  СНОН "
-        # Note: Don't set a value for C here as it will be merged and set in ConclusionGenerator
+        # Note: These will be merged from A to M in ConclusionGenerator
         ws[f'A{conclusion_start_row+13}'] = "Други  заключения "
         
         # Apply styles to conclusion section - with proper formatting
