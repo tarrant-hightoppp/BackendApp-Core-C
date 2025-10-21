@@ -167,8 +167,13 @@ class ExcelTemplateWrapper:
                 doc_num = row_data["Документ №"]
                 # Format document number to meet the 10 digit requirement if possible
                 if isinstance(doc_num, (int, float)):
-                    # Convert number to string with leading zeros
-                    doc_num = f"{int(doc_num):010d}"
+                    # First check if the value is NaN
+                    if pd.isna(doc_num) or (isinstance(doc_num, float) and (doc_num != doc_num)):
+                        # Handle NaN values - use empty string or placeholder
+                        doc_num = ""
+                    else:
+                        # Convert number to string with leading zeros
+                        doc_num = f"{int(doc_num):010d}"
                 elif isinstance(doc_num, str):
                     # Remove any dots or commas
                     doc_num = doc_num.replace(".", "").replace(",", "")

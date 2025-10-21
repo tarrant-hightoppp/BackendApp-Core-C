@@ -34,15 +34,21 @@ class FileProcessor:
         
     def _filter_internal_fields(self, operation_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Filter out internal fields (starting with underscore) from operation data
+        Filter out internal fields (starting with underscore) and fields not in the model
         
         Args:
             operation_data: Dictionary containing operation data
             
         Returns:
-            Filtered dictionary without internal fields
+            Filtered dictionary without internal fields or unsupported fields
         """
-        return {k: v for k, v in operation_data.items() if not k.startswith('_')}
+        # Fields not in the database model
+        unsupported_fields = [
+            'analytical_debit_structured',
+            'analytical_credit_structured'
+        ]
+        return {k: v for k, v in operation_data.items()
+                if not k.startswith('_') and k not in unsupported_fields}
     
     def create_file(self, filename: str, template_type: str, file_path: str, import_uuid: str) -> UploadedFile:
         """

@@ -7,7 +7,7 @@ from app.services.parsers.base_parser import BaseExcelParser
 
 
 class AjurParser(BaseExcelParser):
-    """Parser for AJUR Excel format"""
+    """Parser for AJUR Excel format - supports both standard, chronological and audit templates"""
     
     def parse(self, file_path: str, file_id: int, import_uuid: str = None) -> List[Dict[str, Any]]:
         """
@@ -298,10 +298,11 @@ class AjurParser(BaseExcelParser):
                     analytical_credit_idx = column_map.get('analytical_credit')
                     desc_idx = column_map.get('description')
                     
-                    # Extract and clean data safely
-                    operation_date = self.convert_to_date(
-                        row.iloc[date_idx] if date_idx is not None and date_idx < len(row) else None
-                    )
+                    # Extract and clean date safely with special handling for document type codes
+                    raw_date_value = row.iloc[date_idx] if date_idx is not None and date_idx < len(row) else None
+                    
+                    # Handle the date conversion with special handling for document type codes
+                    operation_date = self.convert_ajur_date(raw_date_value)
                     
                     document_type = self.clean_string(
                         row.iloc[doc_type_idx] if doc_type_idx is not None and doc_type_idx < len(row) else None
@@ -339,23 +340,29 @@ class AjurParser(BaseExcelParser):
                                 print(f"[DEBUG] AJUR parser - Extracted numeric amount: {amount}")
                         # Then try string cleaning if it's a string
                         elif isinstance(amount_value, str) and amount_value.strip():
-                            # Remove spaces, replace commas, etc.
-                            cleaned = amount_value.replace(' ', '').replace(',', '.').strip()
-                            if cleaned and any(c.isdigit() for c in cleaned):
-                                try:
-                                    amount = float(cleaned)
-                                    if idx % 100 == 0:
-                                        print(f"[DEBUG] AJUR parser - Extracted amount from string: {amount}")
-                                except ValueError:
-                                    pass
+                            # Check for [object Object] which indicates corrupted data
+                            if '[object Object]' in amount_value:
+                                print(f"[DEBUG] AJUR parser - Found [object Object] in amount field, row {idx}")
+                                # Try to recover from previous valid rows with similar accounts
+                                amount = self._recover_corrupted_amount(df, idx, debit_account, credit_account, amount_idx, column_map)
+                            else:
+                                # Regular string cleaning
+                                cleaned = amount_value.replace(' ', '').replace(',', '.').strip()
+                                if cleaned and any(c.isdigit() for c in cleaned):
+                                    try:
+                                        amount = float(cleaned)
+                                        if idx % 100 == 0:
+                                            print(f"[DEBUG] AJUR parser - Extracted amount from string: {amount}")
+                                    except ValueError:
+                                        pass
                         
                         # Fall back to the clean_numeric method
                         if amount is None:
                             amount = self.clean_numeric(amount_value)
                             
                         # Apply a sanity check - amount should be reasonably large for a financial transaction
-                        # This helps filter out row numbers mistakenly identified as amounts
-                        if amount is not None and amount < 0.1:
+                        # This helps filter out row numbers mistakenly identified as amounts, but allow small valid transactions
+                        if amount is not None and abs(amount) < 0.001:  # Using absolute value to handle both positive and negative small amounts
                             if idx % 100 == 0:
                                 print(f"[DEBUG] AJUR parser - Amount too small, might be a row number: {amount}")
                             amount = None
@@ -367,15 +374,47 @@ class AjurParser(BaseExcelParser):
                         row.iloc[desc_idx] if desc_idx is not None and desc_idx < len(row) else None
                     )
                     
-                    # Skip if we don't have a valid date or amount or account info
-                    if not operation_date or not amount:
-                        print(f"[DEBUG] AJUR parser - Skipping row {idx} - missing date or amount")
+                    # Skip if we don't have necessary data
+                    # Allow operations without a date if we have amount and account info
+                    if not amount:
+                        print(f"[DEBUG] AJUR parser - Skipping row {idx} - missing amount")
                         continue
                     
                     # Ensure we have at least one account
                     if not debit_account and not credit_account:
                         print(f"[DEBUG] AJUR parser - Skipping row {idx} - missing both debit and credit accounts")
                         continue
+                        
+                    # If operation date is missing but we have account info and amount,
+                    # try to use a fallback date or current date
+                    if not operation_date:
+                        print(f"[DEBUG] AJUR parser - Row {idx} is missing date but has account info - using fallback date")
+                        # Try to extract date from document type if it contains a date format (e.g., "/ 31.12.2023")
+                        if document_type and "/" in document_type:
+                            parts = document_type.split("/")
+                            if len(parts) >= 2:
+                                date_part = parts[1].strip()
+                                try:
+                                    operation_date = datetime.strptime(date_part, "%d.%m.%Y").date()
+                                    print(f"[DEBUG] AJUR parser - Extracted date {operation_date} from document type")
+                                except:
+                                    # If extraction fails, continue with other methods
+                                    pass
+                        
+                        # If still no date, try to extract from document number if available
+                        if not operation_date and document_number and "/" in document_number:
+                            date_part = document_number.split("/")[1].strip()
+                            try:
+                                operation_date = datetime.strptime(date_part, "%d.%m.%Y").date()
+                                print(f"[DEBUG] AJUR parser - Extracted date {operation_date} from document number")
+                            except:
+                                # If extraction fails, use current date as fallback
+                                operation_date = datetime.now().date()
+                                print(f"[DEBUG] AJUR parser - Using current date {operation_date} as fallback")
+                        # If still no date, use current date as fallback
+                        elif not operation_date:
+                            operation_date = datetime.now().date()
+                            print(f"[DEBUG] AJUR parser - Using current date {operation_date} as fallback")
                 except Exception as extract_error:
                     print(f"[DEBUG] AJUR parser - Error extracting data from row {idx}: {str(extract_error)}")
                     continue
@@ -395,6 +434,33 @@ class AjurParser(BaseExcelParser):
                     except (ValueError, TypeError):
                         sequence_number = None
                 
+                # Extract structured analytical account data
+                analytical_debit_structured = self._parse_analytical_account(analytical_debit)
+                analytical_credit_structured = self._parse_analytical_account(analytical_credit)
+                
+                # Extract audit-specific fields if available
+                audit_finding = None
+                deviation = None
+                control_action = None
+                control_finding = None
+                
+                audit_finding_idx = column_map.get('audit_finding')
+                if audit_finding_idx is not None and audit_finding_idx < len(row):
+                    audit_finding = self.clean_string(row.iloc[audit_finding_idx])
+                    
+                deviation_idx = column_map.get('deviation')
+                if deviation_idx is not None and deviation_idx < len(row):
+                    deviation = self.clean_string(row.iloc[deviation_idx])
+                    
+                control_action_idx = column_map.get('control_action')
+                if control_action_idx is not None and control_action_idx < len(row):
+                    control_action = self.clean_string(row.iloc[control_action_idx])
+                    
+                control_finding_idx = column_map.get('control_finding')
+                if control_finding_idx is not None and control_finding_idx < len(row):
+                    control_finding = self.clean_string(row.iloc[control_finding_idx])
+                
+                # Simplified operation data with only essential fields supported by AccountingOperation model
                 operation = {
                     "file_id": file_id,
                     "operation_date": operation_date,
@@ -406,15 +472,12 @@ class AjurParser(BaseExcelParser):
                     "description": description,
                     "analytical_debit": analytical_debit,
                     "analytical_credit": analytical_credit,
+                    "analytical_debit_structured": analytical_debit_structured,
+                    "analytical_credit_structured": analytical_credit_structured,
                     "template_type": "ajur",
                     "raw_data": sanitized_raw_data,
                     "import_uuid": import_uuid,
-                    # New audit fields with default values
-                    "sequence_number": sequence_number,
-                    "verified_amount": None,
-                    "deviation_amount": None,
-                    "control_action": None,
-                    "deviation_note": None
+                    "sequence_number": sequence_number
                 }
                 
                 operations.append(operation)
@@ -693,10 +756,11 @@ class AjurParser(BaseExcelParser):
                     analytical_credit_idx = column_map.get('analytical_credit')
                     desc_idx = column_map.get('description')
                     
-                    # Extract and clean data safely
-                    operation_date = self.convert_to_date(
-                        row.iloc[date_idx] if date_idx is not None and date_idx < len(row) else None
-                    )
+                    # Extract and clean date safely with special handling for document type codes
+                    raw_date_value = row.iloc[date_idx] if date_idx is not None and date_idx < len(row) else None
+                    
+                    # Handle the date conversion with special handling for document type codes
+                    operation_date = self.convert_ajur_date(raw_date_value)
                     
                     document_type = self.clean_string(
                         row.iloc[doc_type_idx] if doc_type_idx is not None and doc_type_idx < len(row) else None
@@ -731,23 +795,29 @@ class AjurParser(BaseExcelParser):
                                 print(f"[DEBUG] AJUR parser (memory) - Extracted numeric amount: {amount}")
                         # Then try string cleaning if it's a string
                         elif isinstance(amount_value, str) and amount_value.strip():
-                            # Remove spaces, replace commas, etc.
-                            cleaned = amount_value.replace(' ', '').replace(',', '.').strip()
-                            if cleaned and any(c.isdigit() for c in cleaned):
-                                try:
-                                    amount = float(cleaned)
-                                    if idx % 100 == 0:
-                                        print(f"[DEBUG] AJUR parser (memory) - Extracted amount from string: {amount}")
-                                except ValueError:
-                                    pass
+                            # Check for [object Object] which indicates corrupted data
+                            if '[object Object]' in amount_value:
+                                print(f"[DEBUG] AJUR parser (memory) - Found [object Object] in amount field, row {idx}")
+                                # Try to recover from previous valid rows with similar accounts
+                                amount = self._recover_corrupted_amount(df, idx, debit_account, credit_account, amount_idx, column_map)
+                            else:
+                                # Regular string cleaning
+                                cleaned = amount_value.replace(' ', '').replace(',', '.').strip()
+                                if cleaned and any(c.isdigit() for c in cleaned):
+                                    try:
+                                        amount = float(cleaned)
+                                        if idx % 100 == 0:
+                                            print(f"[DEBUG] AJUR parser (memory) - Extracted amount from string: {amount}")
+                                    except ValueError:
+                                        pass
                         
                         # Fall back to the clean_numeric method
                         if amount is None:
                             amount = self.clean_numeric(amount_value)
                             
                         # Apply a sanity check - amount should be reasonably large for a financial transaction
-                        # This helps filter out row numbers mistakenly identified as amounts
-                        if amount is not None and amount < 0.1:
+                        # This helps filter out row numbers mistakenly identified as amounts, but allow small valid transactions
+                        if amount is not None and abs(amount) < 0.001:  # Using absolute value to handle both positive and negative small amounts
                             if idx % 100 == 0:
                                 print(f"[DEBUG] AJUR parser (memory) - Amount too small, might be a row number: {amount}")
                             amount = None
@@ -759,15 +829,47 @@ class AjurParser(BaseExcelParser):
                         row.iloc[desc_idx] if desc_idx is not None and desc_idx < len(row) else None
                     )
                     
-                    # Skip if we don't have a valid date or amount or account info
-                    if not operation_date or not amount:
-                        print(f"[DEBUG] AJUR parser (memory) - Skipping row {idx} - missing date or amount")
+                    # Skip if we don't have necessary data
+                    # Allow operations without a date if we have amount and account info
+                    if not amount:
+                        print(f"[DEBUG] AJUR parser (memory) - Skipping row {idx} - missing amount")
                         continue
                     
                     # Ensure we have at least one account
                     if not debit_account and not credit_account:
                         print(f"[DEBUG] AJUR parser (memory) - Skipping row {idx} - missing both debit and credit accounts")
                         continue
+                        
+                    # If operation date is missing but we have account info and amount,
+                    # try to use a fallback date or current date
+                    if not operation_date:
+                        print(f"[DEBUG] AJUR parser (memory) - Row {idx} is missing date but has account info - using fallback date")
+                        # Try to extract date from document type if it contains a date format (e.g., "/ 31.12.2023")
+                        if document_type and "/" in document_type:
+                            parts = document_type.split("/")
+                            if len(parts) >= 2:
+                                date_part = parts[1].strip()
+                                try:
+                                    operation_date = datetime.strptime(date_part, "%d.%m.%Y").date()
+                                    print(f"[DEBUG] AJUR parser (memory) - Extracted date {operation_date} from document type")
+                                except:
+                                    # If extraction fails, continue with other methods
+                                    pass
+                        
+                        # If still no date, try to extract from document number if available
+                        if not operation_date and document_number and "/" in document_number:
+                            date_part = document_number.split("/")[1].strip()
+                            try:
+                                operation_date = datetime.strptime(date_part, "%d.%m.%Y").date()
+                                print(f"[DEBUG] AJUR parser (memory) - Extracted date {operation_date} from document number")
+                            except:
+                                # If extraction fails, use current date as fallback
+                                operation_date = datetime.now().date()
+                                print(f"[DEBUG] AJUR parser (memory) - Using current date {operation_date} as fallback")
+                        # If still no date, use current date as fallback
+                        elif not operation_date:
+                            operation_date = datetime.now().date()
+                            print(f"[DEBUG] AJUR parser (memory) - Using current date {operation_date} as fallback")
                 except Exception as extract_error:
                     print(f"[DEBUG] AJUR parser (memory) - Error extracting data from row {idx}: {str(extract_error)}")
                     continue
@@ -787,6 +889,33 @@ class AjurParser(BaseExcelParser):
                     except (ValueError, TypeError):
                         sequence_number = None
                 
+                # Extract structured analytical account data
+                analytical_debit_structured = self._parse_analytical_account(analytical_debit)
+                analytical_credit_structured = self._parse_analytical_account(analytical_credit)
+                
+                # Extract audit-specific fields if available
+                audit_finding = None
+                deviation = None
+                control_action = None
+                control_finding = None
+                
+                audit_finding_idx = column_map.get('audit_finding')
+                if audit_finding_idx is not None and audit_finding_idx < len(row):
+                    audit_finding = self.clean_string(row.iloc[audit_finding_idx])
+                    
+                deviation_idx = column_map.get('deviation')
+                if deviation_idx is not None and deviation_idx < len(row):
+                    deviation = self.clean_string(row.iloc[deviation_idx])
+                    
+                control_action_idx = column_map.get('control_action')
+                if control_action_idx is not None and control_action_idx < len(row):
+                    control_action = self.clean_string(row.iloc[control_action_idx])
+                    
+                control_finding_idx = column_map.get('control_finding')
+                if control_finding_idx is not None and control_finding_idx < len(row):
+                    control_finding = self.clean_string(row.iloc[control_finding_idx])
+                
+                # Simplified operation data with only essential fields supported by AccountingOperation model
                 operation = {
                     "file_id": file_id,
                     "operation_date": operation_date,
@@ -798,15 +927,12 @@ class AjurParser(BaseExcelParser):
                     "description": description,
                     "analytical_debit": analytical_debit,
                     "analytical_credit": analytical_credit,
+                    "analytical_debit_structured": analytical_debit_structured,
+                    "analytical_credit_structured": analytical_credit_structured,
                     "template_type": "ajur",
                     "raw_data": sanitized_raw_data,
                     "import_uuid": import_uuid,
-                    # New audit fields with default values
-                    "sequence_number": sequence_number,
-                    "verified_amount": None,
-                    "deviation_amount": None,
-                    "control_action": None,
-                    "deviation_note": None
+                    "sequence_number": sequence_number
                 }
                 
                 operations.append(operation)
@@ -822,9 +948,49 @@ class AjurParser(BaseExcelParser):
             print(f"Error parsing AJUR Excel file from memory: {e}")
             return []
     
+    def _detect_ajur_template_type(self, df: pd.DataFrame) -> str:
+        """
+        Detect the AJUR template type based on column headers and content patterns
+        
+        Args:
+            df: DataFrame with the Excel content
+            
+        Returns:
+            String indicating the template type: "audit", "chronological", or "standard"
+        """
+        # Check column headers and first few rows
+        for i in range(min(10, len(df))):
+            row_values = [str(val).lower() if not pd.isna(val) else "" for val in df.iloc[i].values]
+            row_text = " ".join(row_values)
+            
+            # Check for audit-specific columns
+            if "установено при одита" in row_text or "тествани на контролни действия" in row_text:
+                print(f"[DEBUG] AJUR parser - Detected audit template type at row {i}")
+                return "audit"
+                
+            # Check for chronological format with user/operation columns
+            if "потр" in row_text and (("опер" in row_text and "no" in row_text) or ("опер" in row_text and "№" in row_text)):
+                print(f"[DEBUG] AJUR parser - Detected chronological template type at row {i}")
+                return "chronological"
+        
+        # If columns count is approximately 18, it's probably audit type
+        if len(df.columns) >= 17:
+            print(f"[DEBUG] AJUR parser - Detected possible audit template type based on column count ({len(df.columns)})")
+            return "audit"
+            
+        # If columns count is approximately 12, it's probably chronological type
+        if len(df.columns) >= 11 and len(df.columns) <= 13:
+            print(f"[DEBUG] AJUR parser - Detected possible chronological template type based on column count ({len(df.columns)})")
+            return "chronological"
+        
+        # Default to standard AJUR if can't determine
+        print(f"[DEBUG] AJUR parser - Using default standard template type")
+        return "standard"
+    
     def _detect_columns(self, df: pd.DataFrame) -> Dict[str, Optional[int]]:
         """
-        Dynamically detect column positions in the dataframe
+        Enhanced column detection for multiple Ajur formats
+        Supports both chronological and audit formats with more flexible name matching
         
         Args:
             df: DataFrame with the Excel content
@@ -832,7 +998,11 @@ class AjurParser(BaseExcelParser):
         Returns:
             Dictionary mapping column types to their indices
         """
-        # Initialize column map with all None values
+        # Detect template type first
+        template_type = self._detect_ajur_template_type(df)
+        print(f"[DEBUG] AJUR parser - Working with detected template type: {template_type}")
+        
+        # Initialize column map with all None values - extended with format-specific columns
         column_map = {
             'doc_type': None,      # Document type column
             'doc_number': None,    # Document number column
@@ -842,45 +1012,149 @@ class AjurParser(BaseExcelParser):
             'credit': None,        # Credit account column
             'analytical_credit': None, # Analytical credit column
             'amount': None,        # Amount column
-            'description': None    # Description column
+            'description': None,   # Description column
+            # Format-specific columns
+            'operator': None,           # User/operator ID (chronological format)
+            'operation_number': None,   # Operation number (chronological format)
+            'sequence_number': None,    # Sequence/row number
+            # Audit-specific columns
+            'audit_finding': None,      # "Установено при одита"
+            'deviation': None,          # "Отклонение"
+            'control_action': None,     # "Тествани на контролни действия"
+            'control_finding': None,    # "Установено наличие на контролно действие при одита"
+            # Additional columns for second format
+            'quantity': None,           # "Количество 1 по Кт"
+            'measure': None             # "Мярка 1 по Кт"
         }
         
-        # Check the first 30 rows for potential headers
-        for i in range(min(30, len(df))):
-            row_values = [str(val).lower() if not pd.isna(val) else "" for val in df.iloc[i].values]
+        # First, check column names directly
+        for i, col_name in enumerate(df.columns):
+            col_str = str(col_name).lower().strip()
             
-            # Look for column headers by keywords
-            for col_idx, val in enumerate(row_values):
-                if not val:  # Skip empty values
-                    continue
+            # Look for various column identifiers across both formats
+            if i == 0 and (col_str == "№" or "потр" in col_str):
+                # Either sequence number (№) or operator (Потр) can be in first column
+                if "№" in col_str or "no" in col_str or "номер" in col_str:
+                    column_map['sequence_number'] = i
+                    print(f"[DEBUG] AJUR parser - Found sequence number column at index {i}: {col_str}")
+                else:
+                    column_map['operator'] = i
+                    print(f"[DEBUG] AJUR parser - Found operator column at index {i}: {col_str}")
                     
-                # Check for different column types
-                if any(keyword in val for keyword in ["вид", "тип", "type", "документ"]) and "номер" not in val:
-                    column_map['doc_type'] = col_idx
-                elif any(keyword in val for keyword in ["номер", "no.", "number"]):
-                    column_map['doc_number'] = col_idx
-                elif any(keyword in val for keyword in ["дата", "date"]):
-                    column_map['date'] = col_idx
-                elif ("дебит" in val or "дт" in val or "dt" in val or "debit" in val) and "аналитична" not in val:
-                    column_map['debit'] = col_idx
-                elif ("кредит" in val or "кт" in val or "kt" in val or "credit" in val) and "аналитична" not in val:
-                    column_map['credit'] = col_idx
-                elif any(keyword in val for keyword in ["сума", "amount", "value", "стойност"]):
-                    column_map['amount'] = col_idx
-                elif any(keyword in val for keyword in ["аналитична", "analytics", "analytic"]) and column_map['analytical_debit'] is None:
-                    column_map['analytical_debit'] = col_idx
-                elif any(keyword in val for keyword in ["аналитична", "analytics", "analytic"]) and column_map['analytical_debit'] is not None:
-                    column_map['analytical_credit'] = col_idx
-                elif any(keyword in val for keyword in ["обяснение", "описание", "description", "details", "основание"]):
-                    column_map['description'] = col_idx
-            
-            # If we found most of the important columns, consider this a header row
-            critical_columns = [column_map['debit'], column_map['credit'], column_map['amount']]
-            if sum(1 for col in critical_columns if col is not None) >= 2:
-                print(f"[DEBUG] _detect_columns - Found header row at {i}")
-                break
+            elif "опер" in col_str and ("no" in col_str or "№" in col_str):
+                column_map['operation_number'] = i
+                print(f"[DEBUG] AJUR parser - Found operation number column at index {i}: {col_str}")
+                
+            elif "сума" in col_str:
+                column_map['amount'] = i
+                print(f"[DEBUG] AJUR parser - Found amount column at index {i}: {col_str}")
+                
+            elif ("дт" in col_str or "дебит" in col_str) and "с/ка" in col_str and "аналитична" not in col_str:
+                column_map['debit'] = i
+                print(f"[DEBUG] AJUR parser - Found debit account column at index {i}: {col_str}")
+                
+            elif ("кт" in col_str or "кредит" in col_str) and "с/ка" in col_str and "аналитична" not in col_str:
+                column_map['credit'] = i
+                print(f"[DEBUG] AJUR parser - Found credit account column at index {i}: {col_str}")
+                
+            elif "аналитична" in col_str and "сметка" in col_str:
+                # Determine if this is debit or credit analytical based on position relative to main accounts
+                if column_map['debit'] is not None and i > column_map['debit'] and column_map['analytical_debit'] is None:
+                    column_map['analytical_debit'] = i
+                    print(f"[DEBUG] AJUR parser - Found analytical debit column at index {i}: {col_str}")
+                elif column_map['credit'] is not None and i > column_map['credit'] and column_map['analytical_credit'] is None:
+                    column_map['analytical_credit'] = i
+                    print(f"[DEBUG] AJUR parser - Found analytical credit column at index {i}: {col_str}")
+                elif column_map['analytical_debit'] is None:
+                    column_map['analytical_debit'] = i
+                    print(f"[DEBUG] AJUR parser - Found analytical debit column at index {i}: {col_str}")
+                else:
+                    column_map['analytical_credit'] = i
+                    print(f"[DEBUG] AJUR parser - Found analytical credit column at index {i}: {col_str}")
+                    
+            elif "дата" in col_str:
+                if "рег" in col_str:
+                    column_map['date'] = i
+                    print(f"[DEBUG] AJUR parser - Found registration date column at index {i}: {col_str}")
+                elif column_map['date'] is None:
+                    column_map['date'] = i
+                    print(f"[DEBUG] AJUR parser - Found date column at index {i}: {col_str}")
+                    
+            elif ("вид" in col_str and "док" in col_str):
+                column_map['doc_type'] = i
+                print(f"[DEBUG] AJUR parser - Found document type column at index {i}: {col_str}")
+                
+            elif "документ" in col_str and ("no" in col_str or "дата" in col_str or "№" in col_str):
+                column_map['doc_number'] = i
+                print(f"[DEBUG] AJUR parser - Found document number column at index {i}: {col_str}")
+                
+            elif "обяснителен" in col_str or "текст" in col_str:
+                column_map['description'] = i
+                print(f"[DEBUG] AJUR parser - Found description column at index {i}: {col_str}")
+                
+            # Handle audit-specific columns from the second format
+            elif "установено при одита" in col_str:
+                column_map['audit_finding'] = i
+                print(f"[DEBUG] AJUR parser - Found audit finding column at index {i}: {col_str}")
+                
+            elif "отклонение" in col_str:
+                column_map['deviation'] = i
+                print(f"[DEBUG] AJUR parser - Found deviation column at index {i}: {col_str}")
+                
+            elif "тествани" in col_str and "контролни" in col_str:
+                column_map['control_action'] = i
+                print(f"[DEBUG] AJUR parser - Found control action column at index {i}: {col_str}")
+                
+            elif "установено наличие" in col_str and "контролно действие" in col_str:
+                column_map['control_finding'] = i
+                print(f"[DEBUG] AJUR parser - Found control finding column at index {i}: {col_str}")
+                
+            elif "количество" in col_str:
+                column_map['quantity'] = i
+                print(f"[DEBUG] AJUR parser - Found quantity column at index {i}: {col_str}")
+                
+            elif "мярка" in col_str:
+                column_map['measure'] = i
+                print(f"[DEBUG] AJUR parser - Found measure column at index {i}: {col_str}")
         
-        # If we couldn't find key columns, try alternative detection methods
+        # Check the first 30 rows for potential headers if direct column name check wasn't enough
+        if column_map['amount'] is None or column_map['debit'] is None or column_map['credit'] is None:
+            print("[DEBUG] AJUR parser - Checking row values for column headers")
+            for i in range(min(30, len(df))):
+                row_values = [str(val).lower() if not pd.isna(val) else "" for val in df.iloc[i].values]
+                
+                # Look for column headers by keywords
+                for col_idx, val in enumerate(row_values):
+                    if not val:  # Skip empty values
+                        continue
+                        
+                    # Check for different column types - common for all formats
+                    if any(keyword in val for keyword in ["вид", "тип", "type", "документ"]) and "номер" not in val:
+                        column_map['doc_type'] = col_idx
+                    elif any(keyword in val for keyword in ["номер", "no.", "number"]):
+                        column_map['doc_number'] = col_idx
+                    elif any(keyword in val for keyword in ["дата", "date"]):
+                        column_map['date'] = col_idx
+                    elif ("дебит" in val or "дт" in val or "dt" in val or "debit" in val) and "аналитична" not in val:
+                        column_map['debit'] = col_idx
+                    elif ("кредит" in val or "кт" in val or "kt" in val or "credit" in val) and "аналитична" not in val:
+                        column_map['credit'] = col_idx
+                    elif any(keyword in val for keyword in ["сума", "amount", "value", "стойност"]):
+                        column_map['amount'] = col_idx
+                    elif any(keyword in val for keyword in ["аналитична", "analytics", "analytic"]) and column_map['analytical_debit'] is None:
+                        column_map['analytical_debit'] = col_idx
+                    elif any(keyword in val for keyword in ["аналитична", "analytics", "analytic"]) and column_map['analytical_debit'] is not None:
+                        column_map['analytical_credit'] = col_idx
+                    elif any(keyword in val for keyword in ["обяснение", "описание", "description", "details", "основание", "текст"]):
+                        column_map['description'] = col_idx
+                
+                # If we found most of the important columns, consider this a header row
+                critical_columns = [column_map['debit'], column_map['credit'], column_map['amount']]
+                if sum(1 for col in critical_columns if col is not None) >= 2:
+                    print(f"[DEBUG] _detect_columns - Found header row at {i}")
+                    break
+        
+        # Fallback for amount column - try both format positions
         if column_map['amount'] is None:
             print("[DEBUG] _detect_columns - Amount column not found, trying alternative detection")
             # Try to find a column with numeric values that could be amounts
@@ -913,17 +1187,59 @@ class AjurParser(BaseExcelParser):
                     else:
                         print(f"[DEBUG] _detect_columns - Column {col_idx} has numeric values but avg ({avg_value}) is too small, likely not amounts")
             
-            # If still not found, check column names for 'сума'
+            # Try specific positions for known formats
             if column_map['amount'] is None:
-                for i, col in enumerate(df.columns):
-                    if 'сума' in str(col).lower():
-                        print(f"[DEBUG] _detect_columns - Found amount column by name at index {i}: {col}")
-                        column_map['amount'] = i
-                        break
+                # Try format 1 position (column ~11)
+                amount_candidates = [11, 12]  # Common positions for amount in both formats
+                for pos in amount_candidates:
+                    if pos < len(df.columns):
+                        # Check if column has numeric values
+                        numeric_count = sum(1 for i in range(min(10, len(df)))
+                                        if isinstance(df.iloc[i, pos], (int, float))
+                                        and not pd.isna(df.iloc[i, pos]))
+                        if numeric_count >= 3:  # If at least 3 rows have numeric values
+                            column_map['amount'] = pos
+                            print(f"[DEBUG] AJUR parser - Using fallback amount column at position {pos}")
+                            break
+        
+        # Fallback for account columns
+        if column_map['debit'] is None and len(df.columns) >= 7:
+            # Try typical positions for debit account
+            for pos in [5, 6]:
+                if pos < len(df.columns):
+                    column_map['debit'] = pos
+                    print(f"[DEBUG] AJUR parser - Using fallback debit account column at position {pos}")
+                    break
+                    
+        if column_map['credit'] is None and len(df.columns) >= 9:
+            # Try typical positions for credit account
+            for pos in [8, 9]:
+                if pos < len(df.columns):
+                    column_map['credit'] = pos
+                    print(f"[DEBUG] AJUR parser - Using fallback credit account column at position {pos}")
+                    break
+        
+        # Handle the case when "[object Object]" values are detected
+        # Check a sample of rows for this pattern
+        sample_size = min(10, len(df))
+        object_placeholders_found = False
+        for i in range(sample_size):
+            try:
+                row = df.iloc[i]
+                for col_idx in range(len(row)):
+                    cell_value = row.iloc[col_idx]
+                    if isinstance(cell_value, str) and '[object Object]' in cell_value:
+                        object_placeholders_found = True
+                        print(f"[DEBUG] AJUR parser - Found [object Object] placeholder in column {col_idx}, row {i}")
+                        # If this is in the amount column, mark it for special handling
+                        if column_map['amount'] == col_idx:
+                            print(f"[DEBUG] AJUR parser - Amount column contains [object Object] placeholders - will apply special recovery")
+            except:
+                continue
         
         # Try to infer missing columns based on typical layout
-        if all(v is None for v in column_map.values()):
-            print("[DEBUG] _detect_columns - No columns detected, using default AJUR layout")
+        if all(v is None for v in [column_map['debit'], column_map['credit'], column_map['amount']]):
+            print("[DEBUG] _detect_columns - Critical columns not detected, using default AJUR layout")
             # Default Ajur layout (based on typical structure)
             column_map = {
                 'doc_type': 0,
@@ -1098,3 +1414,255 @@ class AjurParser(BaseExcelParser):
                 result[key] = value
                 
         return result
+        
+    def convert_ajur_date(self, date_value: Any) -> Optional[datetime.date]:
+        """
+        Convert AJUR date formats to standard date with special handling for document type codes
+        
+        Args:
+            date_value: Date value in various formats (string, datetime, etc.)
+            
+        Returns:
+            Standardized date object or None if conversion fails
+        """
+        if pd.isna(date_value):
+            return None
+            
+        # Special handling for known document type codes in Bulgarian accounting
+        # These are not dates but document type codes like "МО", "КДИ", "СчС", etc.
+        document_type_codes = ["МО", "КДИ", "СчС", "БИ", "ФД", "СчС", "Орд", "Ф-ра"]
+        if isinstance(date_value, str) and date_value.strip() in document_type_codes:
+            print(f"[DEBUG] AJUR parser - Detected document type code '{date_value}' in date field, treating as non-date")
+            # This is a document type code, not a date
+            # We'll use current date as a fallback or try to extract date from other fields
+            return None
+                
+        # If not a document type code, proceed with normal date conversion
+        try:
+            if isinstance(date_value, datetime):
+                return date_value.date()
+            elif isinstance(date_value, str):
+                # Try different date formats common in Bulgarian accounting
+                for fmt in ["%d.%m.%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"]:
+                    try:
+                        return datetime.strptime(date_value, fmt).date()
+                    except ValueError:
+                        continue
+                
+                # If we got here, none of our specific formats matched
+                # Try to extract date parts using splitting (for formats like "БИ 2/ 05.01.2023")
+                if "/" in date_value:
+                    parts = date_value.split("/")
+                    if len(parts) >= 2:
+                        # Try to parse the second part as a date
+                        date_part = parts[1].strip()
+                        try:
+                            for fmt in ["%d.%m.%Y", "%d-%m-%Y", "%Y-%m-%d"]:
+                                try:
+                                    return datetime.strptime(date_part, fmt).date()
+                                except ValueError:
+                                    continue
+                        except:
+                            pass
+                
+                # If still no match, try a more flexible approach with pandas
+                try:
+                    return pd.to_datetime(date_value, errors='raise').date()
+                except:
+                    # Last resort - return None for this date
+                    print(f"[DEBUG] AJUR parser - Could not parse date value: {date_value}")
+                    return None
+            else:
+                # Try using pandas to convert numeric or other types
+                try:
+                    return pd.to_datetime(date_value, errors='coerce').date()
+                except:
+                    return None
+        except Exception as e:
+            print(f"[DEBUG] AJUR parser - Error converting date {date_value}: {e}")
+            return None
+    
+    def _parse_analytical_account(self, analytical_value: str) -> Dict[str, Any]:
+        """
+        Parse semicolon-delimited analytical account information into structured data
+        
+        Args:
+            analytical_value: String containing the analytical account information
+            
+        Returns:
+            Dictionary with structured analytical account data
+        """
+        if not analytical_value or pd.isna(analytical_value):
+            return {}
+            
+        parts = analytical_value.split(';')
+        result = {}
+        
+        # Common patterns in analytical data
+        if len(parts) >= 2:
+            # Code;Description format
+            result['code'] = parts[0].strip()
+            result['description'] = parts[1].strip()
+            
+        # More specific patterns based on data observed in AJUR files
+        if len(parts) >= 6:
+            # Format: ID;Name;DocNum;Date;Type;Description
+            result['entity_id'] = parts[0].strip()
+            result['entity_name'] = parts[1].strip()
+            result['document_number'] = parts[2].strip() if len(parts) > 2 else None
+            result['document_date'] = parts[3].strip() if len(parts) > 3 else None
+            result['type_code'] = parts[4].strip() if len(parts) > 4 else None
+            result['type_description'] = parts[5].strip() if len(parts) > 5 else None
+        
+        return result
+    
+    def _recover_corrupted_amount(self, df: pd.DataFrame, current_row_idx: int,
+                                debit_account: str, credit_account: str, amount_idx: int, column_map: Dict[str, Optional[int]] = None) -> Optional[float]:
+        """
+        Enhanced recovery of corrupted amount values (e.g. [object Object])
+        Supports both Ajur formats with improved recovery strategies
+        
+        Args:
+            df: DataFrame with all operations
+            current_row_idx: Index of the current row with corrupted amount
+            debit_account: Debit account of the current operation
+            credit_account: Credit account of the current operation
+            amount_idx: Column index of the amount field
+            column_map: Map of column names to indices
+            
+        Returns:
+            Recovered amount value if possible, None otherwise
+        """
+        print(f"[DEBUG] AJUR parser - Attempting to recover corrupted amount for row {current_row_idx}")
+        
+        # Strategy 1: Look at nearby rows with similar accounts (expanded search range)
+        search_range = 20  # Look at more rows for better matching
+        for idx in range(max(0, current_row_idx - search_range), min(current_row_idx + search_range, len(df))):
+            if idx == current_row_idx:
+                continue  # Skip the current row
+                
+            try:
+                row = df.iloc[idx]
+                # Get debit and credit accounts using column map
+                debit_idx = column_map.get('debit')
+                credit_idx = column_map.get('credit')
+                
+                if debit_idx is not None and debit_idx < len(row):
+                    row_debit = self.clean_string(row.iloc[debit_idx])
+                else:
+                    continue  # Can't compare accounts
+                    
+                if credit_idx is not None and credit_idx < len(row):
+                    row_credit = self.clean_string(row.iloc[credit_idx])
+                else:
+                    continue  # Can't compare accounts
+                
+                # Check if accounts match or are similar
+                if row_debit == debit_account and row_credit == credit_account:
+                    # Try to get a valid amount from this row
+                    if amount_idx < len(row):
+                        amount_value = row.iloc[amount_idx]
+                        if isinstance(amount_value, (int, float)) and not pd.isna(amount_value):
+                            recovered_amount = float(amount_value)
+                            print(f"[DEBUG] AJUR parser - Recovered amount {recovered_amount} from row {idx} with matching accounts")
+                            return recovered_amount
+                        elif isinstance(amount_value, str) and '[object Object]' not in amount_value:
+                            # Try to parse string amount
+                            cleaned = amount_value.replace(' ', '').replace(',', '.').strip()
+                            if cleaned and any(c.isdigit() for c in cleaned):
+                                try:
+                                    recovered_amount = float(cleaned)
+                                    print(f"[DEBUG] AJUR parser - Recovered amount {recovered_amount} from row {idx} with matching accounts")
+                                    return recovered_amount
+                                except ValueError:
+                                    pass
+            except Exception as e:
+                print(f"[DEBUG] AJUR parser - Error in account matching recovery for row {idx}: {e}")
+                continue
+        
+        # Strategy 2: Scan all numeric columns in the current row
+        try:
+            row = df.iloc[current_row_idx]
+            # Examine each column for potential amount values
+            for col_idx in range(len(row)):
+                if col_idx == amount_idx:
+                    continue  # Skip the corrupted column itself
+                    
+                cell_value = row.iloc[col_idx]
+                # Check numeric values
+                if isinstance(cell_value, (int, float)) and not pd.isna(cell_value):
+                    # Filter for reasonable financial amounts (avoid very small values that might be row numbers)
+                    if abs(float(cell_value)) >= 0.01 and abs(float(cell_value)) < 10000000:
+                        recovered_amount = float(cell_value)
+                        print(f"[DEBUG] AJUR parser - Recovered amount {recovered_amount} from column {col_idx} in same row")
+                        return recovered_amount
+                # Check string values that might contain numbers
+                elif isinstance(cell_value, str) and any(c.isdigit() for c in cell_value) and '[object Object]' not in cell_value:
+                    # Try to parse numeric strings
+                    try:
+                        # Remove non-numeric chars except decimal point
+                        cleaned = ''.join([c for c in cell_value if c.isdigit() or c == '.' or c == ',' or c == '-'])
+                        cleaned = cleaned.replace(',', '.').strip()
+                        if cleaned and any(c.isdigit() for c in cleaned):
+                            value = float(cleaned)
+                            if abs(value) >= 0.01 and abs(value) < 10000000:
+                                print(f"[DEBUG] AJUR parser - Recovered amount {value} from string in column {col_idx}")
+                                return value
+                    except ValueError:
+                        pass
+        except Exception as e:
+            print(f"[DEBUG] AJUR parser - Error in column scan recovery: {e}")
+        
+        # Strategy 3: Handle [object Object] by trying to infer from context
+        # This specifically targets the second file format where some cells contain "[object Object]"
+        try:
+            # Check rows with the same debit and credit account structure
+            # but look at a different part of the file (further away)
+            for search_distance in [50, 100, 150]:  # Try looking further away
+                for direction in [-1, 1]:  # Look both before and after
+                    check_idx = current_row_idx + (search_distance * direction)
+                    if check_idx < 0 or check_idx >= len(df):
+                        continue
+                        
+                    # Check this distant row
+                    distant_row = df.iloc[check_idx]
+                    distant_debit = None
+                    distant_credit = None
+                    
+                    # Get debit and credit accounts
+                    if column_map.get('debit') is not None and column_map.get('debit') < len(distant_row):
+                        distant_debit = self.clean_string(distant_row.iloc[column_map.get('debit')])
+                    if column_map.get('credit') is not None and column_map.get('credit') < len(distant_row):
+                        distant_credit = self.clean_string(distant_row.iloc[column_map.get('credit')])
+                    
+                    # Look for similar account structure (first part of account)
+                    debit_match = False
+                    credit_match = False
+                    
+                    if distant_debit and debit_account:
+                        # Compare by account prefix (e.g., "601/1" matches "601/2")
+                        distant_debit_parts = distant_debit.split('/')
+                        debit_account_parts = debit_account.split('/')
+                        if distant_debit_parts[0] == debit_account_parts[0]:
+                            debit_match = True
+                            
+                    if distant_credit and credit_account:
+                        # Compare by account prefix
+                        distant_credit_parts = distant_credit.split('/')
+                        credit_account_parts = credit_account.split('/')
+                        if distant_credit_parts[0] == credit_account_parts[0]:
+                            credit_match = True
+                    
+                    if debit_match and credit_match:
+                        # Found similar account structure, check for amount
+                        if amount_idx < len(distant_row):
+                            amount_value = distant_row.iloc[amount_idx]
+                            if isinstance(amount_value, (int, float)) and not pd.isna(amount_value):
+                                recovered_amount = float(amount_value)
+                                print(f"[DEBUG] AJUR parser - Recovered amount {recovered_amount} from distant row {check_idx} with similar account structure")
+                                return recovered_amount
+        except Exception as e:
+            print(f"[DEBUG] AJUR parser - Error in distant row recovery: {e}")
+        
+        print(f"[DEBUG] AJUR parser - Could not recover amount for row {current_row_idx}")
+        return None
