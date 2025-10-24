@@ -305,6 +305,16 @@ class ExcelTemplateWrapper:
                     row_data["Установено контролно действие при одита"],
                     alignment=Alignment(wrap_text=True, vertical='center')
                 )
+                
+            # Column 14: Additional Deviation column (new column)
+            if "Отклонение (забележка)" in row_data:
+                CellUtils.safe_set_cell_value(
+                    template_sheet,
+                    row_num,
+                    14,
+                    row_data["Отклонение (забележка)"],
+                    alignment=Alignment(wrap_text=True, vertical='center')
+                )
             
             row_count += 1
             
@@ -382,6 +392,16 @@ class ExcelTemplateWrapper:
                             alignment=Alignment(horizontal='right', vertical='center'),
                             number_format='#,##0.00'
                         )
+                        
+                        # Add the second deviation field for the subtotal row as well
+                        CellUtils.safe_set_cell_value(
+                            template_sheet,
+                            subtotal_row,
+                            14,  # Column N in new structure
+                            "",  # Usually blank for subtotals
+                            font=Font(name='Calibri', size=11, bold=True),
+                            alignment=Alignment(horizontal='center', vertical='center')
+                        )
                     
                     row_count += 1  # Move to the next row
         
@@ -423,7 +443,7 @@ class ExcelTemplateWrapper:
         
         # Set the conclusion text in a merged cell
         try:
-            template_sheet.merge_cells(f'A{conclusion_start_row+13}:M{conclusion_start_row+13}')
+            template_sheet.merge_cells(f'A{conclusion_start_row+13}:N{conclusion_start_row+13}')
         except:
             pass
         
