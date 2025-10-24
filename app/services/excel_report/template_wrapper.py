@@ -306,13 +306,32 @@ class ExcelTemplateWrapper:
                     alignment=Alignment(wrap_text=True, vertical='center')
                 )
                 
-            # Column 14: Additional Deviation column (new column)
+            # Column 14: First Additional Deviation column
             if "Отклонение (забележка)" in row_data:
                 CellUtils.safe_set_cell_value(
                     template_sheet,
                     row_num,
                     14,
                     row_data["Отклонение (забележка)"],
+                    alignment=Alignment(wrap_text=True, vertical='center')
+                )
+            
+            # Column 15: Second Additional Deviation column
+            if "Отклонение (забележка 2)" in row_data:
+                CellUtils.safe_set_cell_value(
+                    template_sheet,
+                    row_num,
+                    15,
+                    row_data["Отклонение (забележка 2)"],
+                    alignment=Alignment(wrap_text=True, vertical='center')
+                )
+            else:
+                # Initialize with empty string if field doesn't exist
+                CellUtils.safe_set_cell_value(
+                    template_sheet,
+                    row_num,
+                    15,
+                    "",
                     alignment=Alignment(wrap_text=True, vertical='center')
                 )
             
@@ -402,6 +421,16 @@ class ExcelTemplateWrapper:
                             font=Font(name='Calibri', size=11, bold=True),
                             alignment=Alignment(horizontal='center', vertical='center')
                         )
+                        
+                        # Add the third deviation field for the subtotal row as well
+                        CellUtils.safe_set_cell_value(
+                            template_sheet,
+                            subtotal_row,
+                            15,  # Column O in new structure
+                            "",  # Usually blank for subtotals
+                            font=Font(name='Calibri', size=11, bold=True),
+                            alignment=Alignment(horizontal='center', vertical='center')
+                        )
                     
                     row_count += 1  # Move to the next row
         
@@ -443,7 +472,7 @@ class ExcelTemplateWrapper:
         
         # Set the conclusion text in a merged cell
         try:
-            template_sheet.merge_cells(f'A{conclusion_start_row+13}:N{conclusion_start_row+13}')
+            template_sheet.merge_cells(f'A{conclusion_start_row+13}:O{conclusion_start_row+13}')
         except:
             pass
         
