@@ -438,6 +438,24 @@ class AjurParser(BaseExcelParser):
                 analytical_debit_structured = self._parse_analytical_account(analytical_debit)
                 analytical_credit_structured = self._parse_analytical_account(analytical_credit)
                 
+                # Extract partner name from analytical account data
+                partner_name = None
+                # First try to get partner from credit analytical account
+                if analytical_credit_structured and 'entity_name' in analytical_credit_structured:
+                    partner_name = analytical_credit_structured['entity_name']
+                # If not found, try from debit analytical account
+                elif analytical_debit_structured and 'entity_name' in analytical_debit_structured:
+                    partner_name = analytical_debit_structured['entity_name']
+                
+                # Enhance description by including more context from analytical accounts
+                enhanced_description = description
+                if not enhanced_description and (analytical_debit or analytical_credit):
+                    # If no description but we have analytical data, create a description
+                    if analytical_debit_structured and 'description' in analytical_debit_structured:
+                        enhanced_description = analytical_debit_structured['description']
+                    elif analytical_credit_structured and 'description' in analytical_credit_structured:
+                        enhanced_description = analytical_credit_structured['description']
+                
                 # Extract audit-specific fields if available
                 audit_finding = None
                 deviation = None
@@ -469,7 +487,8 @@ class AjurParser(BaseExcelParser):
                     "debit_account": debit_account,
                     "credit_account": credit_account,
                     "amount": amount,
-                    "description": description,
+                    "description": enhanced_description,
+                    "partner_name": partner_name,
                     "analytical_debit": analytical_debit,
                     "analytical_credit": analytical_credit,
                     "analytical_debit_structured": analytical_debit_structured,
@@ -915,6 +934,24 @@ class AjurParser(BaseExcelParser):
                 if control_finding_idx is not None and control_finding_idx < len(row):
                     control_finding = self.clean_string(row.iloc[control_finding_idx])
                 
+                # Extract partner name from analytical account data
+                partner_name = None
+                # First try to get partner from credit analytical account
+                if analytical_credit_structured and 'entity_name' in analytical_credit_structured:
+                    partner_name = analytical_credit_structured['entity_name']
+                # If not found, try from debit analytical account
+                elif analytical_debit_structured and 'entity_name' in analytical_debit_structured:
+                    partner_name = analytical_debit_structured['entity_name']
+                
+                # Enhance description by including more context from analytical accounts
+                enhanced_description = description
+                if not enhanced_description and (analytical_debit or analytical_credit):
+                    # If no description but we have analytical data, create a description
+                    if analytical_debit_structured and 'description' in analytical_debit_structured:
+                        enhanced_description = analytical_debit_structured['description']
+                    elif analytical_credit_structured and 'description' in analytical_credit_structured:
+                        enhanced_description = analytical_credit_structured['description']
+
                 # Simplified operation data with only essential fields supported by AccountingOperation model
                 operation = {
                     "file_id": file_id,
@@ -924,7 +961,8 @@ class AjurParser(BaseExcelParser):
                     "debit_account": debit_account,
                     "credit_account": credit_account,
                     "amount": amount,
-                    "description": description,
+                    "description": enhanced_description,
+                    "partner_name": partner_name,
                     "analytical_debit": analytical_debit,
                     "analytical_credit": analytical_credit,
                     "analytical_debit_structured": analytical_debit_structured,
@@ -1503,14 +1541,28 @@ class AjurParser(BaseExcelParser):
             # Code;Description format
             result['code'] = parts[0].strip()
             result['description'] = parts[1].strip()
+        
+        # AJUR format typically has: ID;PARTNER_NAME;DOC_NUM;DOC_DATE
+        # Example: "20;ЕКОНТ Експрес ООД;1220700737;11.01.2023"
+        if len(parts) >= 2:
+            result['entity_id'] = parts[0].strip()
+            result['entity_name'] = parts[1].strip()
+            
+        if len(parts) >= 4:
+            result['document_number'] = parts[2].strip() if parts[2].strip() else None
+            result['document_date'] = parts[3].strip() if parts[3].strip() else None
             
         # More specific patterns based on data observed in AJUR files
         if len(parts) >= 6:
             # Format: ID;Name;DocNum;Date;Type;Description
-            result['entity_id'] = parts[0].strip()
-            result['entity_name'] = parts[1].strip()
-            result['document_number'] = parts[2].strip() if len(parts) > 2 else None
-            result['document_date'] = parts[3].strip() if len(parts) > 3 else None
+            if 'entity_id' not in result:
+                result['entity_id'] = parts[0].strip()
+            if 'entity_name' not in result:
+                result['entity_name'] = parts[1].strip()
+            if 'document_number' not in result:
+                result['document_number'] = parts[2].strip() if len(parts) > 2 else None
+            if 'document_date' not in result:
+                result['document_date'] = parts[3].strip() if len(parts) > 3 else None
             result['type_code'] = parts[4].strip() if len(parts) > 4 else None
             result['type_description'] = parts[5].strip() if len(parts) > 5 else None
         

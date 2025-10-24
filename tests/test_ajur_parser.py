@@ -111,5 +111,46 @@ def test_ajur_data_extraction(sample_ajur_file_path):
     assert len(doc_types) > 0, "No document types extracted"
 
 
+def test_ajur_partner_extraction(sample_ajur_file_path):
+    """Test partner name extraction and description enhancement from analytical accounts"""
+    parser = AjurParser()
+    operations = parser.parse(sample_ajur_file_path, file_id=1)
+    
+    # Verify some operations have partner names extracted
+    ops_with_partners = [op for op in operations if op.get("partner_name")]
+    assert len(ops_with_partners) > 0, "No operations found with extracted partner names"
+    print(f"Found {len(ops_with_partners)} operations with partner names")
+    
+    # Print some examples of extracted partner names
+    partner_samples = ops_with_partners[:3] if len(ops_with_partners) >= 3 else ops_with_partners
+    print("\nPartner name extraction examples:")
+    for i, op in enumerate(partner_samples):
+        print(f"  Example {i+1}:")
+        print(f"    Partner: {op['partner_name']}")
+        print(f"    Analytical debit: {op.get('analytical_debit', 'None')}")
+        print(f"    Analytical credit: {op.get('analytical_credit', 'None')}")
+    
+    # Check for enhanced descriptions
+    # Count operations where description matches analytical content
+    meaningful_descriptions = [
+        op for op in operations
+        if op.get("description") and (
+            op.get("analytical_debit_structured", {}).get("description", "") in op["description"] or
+            op.get("analytical_credit_structured", {}).get("description", "") in op["description"]
+        )
+    ]
+    
+    print(f"\nFound {len(meaningful_descriptions)} operations with meaningful descriptions")
+    
+    # Ensure we're properly using structured data
+    structured_data_check = [
+        op for op in operations
+        if (op.get("analytical_debit_structured") or op.get("analytical_credit_structured"))
+    ]
+    
+    assert len(structured_data_check) > 0, "No operations found with structured analytical data"
+    print(f"Found {len(structured_data_check)} operations with structured analytical data")
+
+
 if __name__ == "__main__":
     pytest.main(["-xvs", __file__])
