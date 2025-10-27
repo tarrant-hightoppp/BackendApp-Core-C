@@ -140,8 +140,22 @@ class AccountingOperationProcessor:
             # Extract the main account number (first 3 digits)
             # For accounts like "453/2", "453/9", the main account is "453"
             # For accounts with nested subaccounts like "453/2/1", the main account is still "453"
-            parts = account.split('/')
-            main_account = parts[0] if parts else account
+            # Also handle dash-separated subaccounts like "602-99-11" where main account is "602"
+            # Handles all account variations:
+            # - Plain main account (e.g., "602")
+            # - Main account with one subaccount (e.g., "602-99")
+            # - Main account with two subaccounts (e.g., "602-99-11")
+            
+            # First handle slash separator
+            if '/' in account:
+                parts = account.split('/')
+                main_account = parts[0]
+            # Then handle dash separator
+            elif '-' in account:
+                parts = account.split('-')
+                main_account = parts[0]
+            else:
+                main_account = account
             
             # Only use the first 3 digits if it's a numeric account
             if main_account.isdigit() and len(main_account) > 3:
@@ -365,18 +379,12 @@ class AccountingOperationProcessor:
             S3 key if successful, None otherwise
         """
         try:
-            # Convert operations to dataframe
+            # Convert operations to dataframe - without sequence numbers initially
             operation_data = []
             
-            # Counter for sequence number if not already assigned
-            seq_count = 1
-            
             for op in operations:
-                # Use existing sequence_number or assign a new one
-                seq_number = op.sequence_number if op.sequence_number is not None else seq_count
-                
                 operation_data.append({
-                    self.COL_SEQ_NUM: seq_number,
+                    # Don't set COL_SEQ_NUM yet, we'll add it after sorting
                     self.COL_DOC_TYPE: op.document_type,
                     self.COL_DOC_NUM: op.document_number,
                     self.COL_DATE: op.operation_date,
@@ -395,93 +403,27 @@ class AccountingOperationProcessor:
                     # Keep original fields for reference/compatibility
                     "partner_name": op.partner_name,
                     "account_name": op.account_name,
-                    "import_uuid": op.import_uuid
+                    "import_uuid": op.import_uuid,
+                    # Store original sequence number in a separate field for reference if needed
+                    "original_sequence_number": op.sequence_number
                 })
-                
-                if op.sequence_number is None:
-                    seq_count += 1
                 
             # Create DataFrame
             df = pd.DataFrame(operation_data)
             
-            # Add robust sorting with fallback to prevent KeyErrors when columns don't exist
+            # First sort operations chronologically by date
             try:
-                # For account-specific reports, we want to sort first by account number
-                # (to group subaccounts together), then by amount (descending)
-                if account_type == "debit":
-                    # Sort by debit account to group subaccounts together
-                    df = df.sort_values(by=[self.COL_DEBIT_ACC, self.COL_AMOUNT], ascending=[True, False])
-                    
-                    # Remove any summary rows that might be in the middle of the report
-                    # These are rows where the debit account doesn't have a subaccount part (no slash)
-                    # and there are other rows with the same main account but with subaccounts
-                    main_accounts = set()
-                    has_subaccounts = set()
-                    
-                    # First pass: identify accounts with subaccounts (including nested subaccounts)
-                    for acc in df[self.COL_DEBIT_ACC]:
-                        if acc and '/' in acc:
-                            # Handle nested subaccounts like "453/2/1"
-                            parts = acc.split('/')
-                            main_part = parts[0]
-                            has_subaccounts.add(main_part)
-                            main_accounts.add(main_part)
-                            
-                            # Also handle intermediate subaccounts
-                            if len(parts) > 2:
-                                for i in range(1, len(parts)):
-                                    intermediate = '/'.join(parts[:i])
-                                    has_subaccounts.add(intermediate)
-                        elif acc:
-                            main_accounts.add(acc)
-                    
-                    # Second pass: filter out summary rows for accounts that have subaccounts
-                    if has_subaccounts:
-                        df = df[~df[self.COL_DEBIT_ACC].apply(
-                            lambda x: x and (x in has_subaccounts) and not any(
-                                x + '/' in acc for acc in df[self.COL_DEBIT_ACC]
-                            )
-                        )]
-                else:  # credit
-                    # Sort by credit account to group subaccounts together
-                    df = df.sort_values(by=[self.COL_CREDIT_ACC, self.COL_AMOUNT], ascending=[True, False])
-                    
-                    # Similar logic for credit accounts
-                    main_accounts = set()
-                    has_subaccounts = set()
-                    
-                    # First pass: identify accounts with subaccounts (including nested subaccounts)
-                    for acc in df[self.COL_CREDIT_ACC]:
-                        if acc and '/' in acc:
-                            # Handle nested subaccounts like "453/2/1"
-                            parts = acc.split('/')
-                            main_part = parts[0]
-                            has_subaccounts.add(main_part)
-                            main_accounts.add(main_part)
-                            
-                            # Also handle intermediate subaccounts
-                            if len(parts) > 2:
-                                for i in range(1, len(parts)):
-                                    intermediate = '/'.join(parts[:i])
-                                    has_subaccounts.add(intermediate)
-                        elif acc:
-                            main_accounts.add(acc)
-                    
-                    # Second pass: filter out summary rows for accounts that have subaccounts
-                    if has_subaccounts:
-                        df = df[~df[self.COL_CREDIT_ACC].apply(
-                            lambda x: x and (x in has_subaccounts) and not any(
-                                x + '/' in acc for acc in df[self.COL_CREDIT_ACC]
-                            )
-                        )]
+                # Sort by date in ascending order (chronological)
+                df = df.sort_values(by=self.COL_DATE, ascending=True)
+                print(f"[INFO] Sorted operations chronologically by date")
+                
+                # Now add sequence numbers in chronological order (1 for earliest date)
+                df[self.COL_SEQ_NUM] = range(1, len(df) + 1)
+                print(f"[INFO] Added sequence numbers in chronological order")
             except KeyError as e:
-                print(f"[WARNING] Sorting error: Column {e} not found. Falling back to basic sorting.")
-                try:
-                    # Try sorting by just the amount as fallback
-                    df = df.sort_values(by=self.COL_AMOUNT, ascending=False)
-                except KeyError:
-                    # If even that fails, log it but continue without sorting
-                    print("[WARNING] Fallback sorting failed as well. Continuing without sorting.")
+                print(f"[WARNING] Sorting error: Date column {self.COL_DATE} not found. Continuing without sorting.")
+                # If sorting fails, still add sequence numbers in the order we have
+                df[self.COL_SEQ_NUM] = range(1, len(df) + 1)
             
             # Create Excel file in memory
             excel_buffer = io.BytesIO()

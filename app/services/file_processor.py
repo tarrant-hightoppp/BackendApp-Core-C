@@ -9,6 +9,7 @@ from app.services.template_detector import TemplateDetector, TemplateType
 from app.services.parsers.rival_parser import RivalParser
 from app.services.parsers.ajur_parser import AjurParser
 from app.services.parsers.microinvest_parser import MicroinvestParser
+from app.services.parsers.incognita_parser import IncognitaParser
 from app.services.s3 import S3Service
 # Import other parsers as they are implemented
 # from app.services.parsers.business_navigator_parser import BusinessNavigatorParser
@@ -27,6 +28,7 @@ class FileProcessor:
             TemplateType.RIVAL: RivalParser(),
             TemplateType.AJUR: AjurParser(),
             TemplateType.MICROINVEST: MicroinvestParser(),
+            TemplateType.INCOGNITA: IncognitaParser(),
             # Add other parsers as they are implemented
             # TemplateType.BUSINESS_NAVIGATOR: BusinessNavigatorParser(),
             # TemplateType.UNIVERSUM: UniversumParser(),
@@ -115,58 +117,71 @@ class FileProcessor:
             
             print(f"[INFO] Parsed {len(operations)} operations from file {file_id} with import_uuid {file_record.import_uuid}")
             
-            # Save operations to database
-            saved_operations = []
-            for operation_data in operations:
-                # Ensure import_uuid is set correctly in each operation
-                if 'import_uuid' not in operation_data or operation_data['import_uuid'] is None:
-                    operation_data['import_uuid'] = file_record.import_uuid
-                
-                try:
-                    # Print the operation data for debugging (commented out to reduce log verbosity)
-                    # print(f"[DEBUG] Creating operation with data: file_id={file_id}, debit={operation_data.get('debit_account')}, credit={operation_data.get('credit_account')}, amount={operation_data.get('amount')}")
-                    
-                    # Filter out internal fields and create the operation object
-                    filtered_data = self._filter_internal_fields(operation_data)
-                    operation = AccountingOperation(**filtered_data)
-                    self.db.add(operation)
-                    saved_operations.append(operation)
-                except Exception as op_error:
-                    print(f"[ERROR] Failed to create operation: {op_error}")
-                    import traceback
-                    traceback.print_exc()
-                    continue
+            # Process operations in batches to avoid large transaction failures
+            BATCH_SIZE = 500  # Process 500 operations at a time
+            total_operations = len(operations)
+            successful_operations = 0
+            failed_operations = 0
             
-            try:
-                # Mark file as processed
-                file_record.processed = True
+            for batch_start in range(0, total_operations, BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, total_operations)
+                batch = operations[batch_start:batch_end]
+                print(f"[INFO] Processing batch {batch_start//BATCH_SIZE + 1} ({batch_start} to {batch_end-1}) of {total_operations} operations")
                 
-                # Commit changes
-                self.db.commit()
-                self.db.flush()
+                # Process each batch in a separate transaction
+                saved_operations_batch = []
                 
-                # Verify operations were saved
-                db_operations = self.db.query(AccountingOperation).filter(
-                    AccountingOperation.file_id == file_id
-                ).all()
-                
-                if not db_operations or len(db_operations) == 0:
-                    print(f"[ERROR] Failed to save operations to database for file {file_id}: No operations found after commit")
-                    # Try one more time with explicit flushes between operations
-                    for operation_data in operations:
-                        if 'import_uuid' not in operation_data or operation_data['import_uuid'] is None:
-                            operation_data['import_uuid'] = file_record.import_uuid
-                        
+                for operation_data in batch:
+                    # Ensure import_uuid is set correctly in each operation
+                    if 'import_uuid' not in operation_data or operation_data['import_uuid'] is None:
+                        operation_data['import_uuid'] = file_record.import_uuid
+                    
+                    try:
                         # Filter out internal fields and create the operation object
                         filtered_data = self._filter_internal_fields(operation_data)
                         operation = AccountingOperation(**filtered_data)
                         self.db.add(operation)
-                        self.db.flush()
-                    
-                    file_record.processed = True
+                        saved_operations_batch.append(operation)
+                    except Exception as op_error:
+                        print(f"[ERROR] Failed to create operation: {op_error}")
+                        failed_operations += 1
+                        import traceback
+                        traceback.print_exc()
+                        continue
+                
+                try:
+                    # Commit each batch separately
                     self.db.commit()
-                else:
-                    print(f"[INFO] Successfully saved {len(db_operations)} operations to database for file {file_id}")
+                    successful_operations += len(saved_operations_batch)
+                    print(f"[INFO] Successfully committed batch with {len(saved_operations_batch)} operations")
+                except Exception as batch_error:
+                    print(f"[ERROR] Failed to commit batch: {batch_error}")
+                    import traceback
+                    traceback.print_exc()
+                    self.db.rollback()
+                    failed_operations += len(batch)
+                    
+            try:
+                # Mark file as processed after all batches have been processed
+                file_record.processed = True
+                self.db.commit()
+                
+                print(f"[INFO] Processing completed: {successful_operations} operations saved successfully, {failed_operations} operations failed")
+                
+                # Verify some operations were saved
+                db_operations = self.db.query(AccountingOperation).filter(
+                    AccountingOperation.file_id == file_id
+                ).count()
+                
+                print(f"[INFO] Verification: {db_operations} operations found in database for file {file_id}")
+                
+                # If no operations were saved at all, it's a complete failure
+                if db_operations == 0:
+                    print(f"[ERROR] Failed to save any operations to database for file {file_id}")
+                    return None
+                
+                if successful_operations < total_operations:
+                    print(f"[WARNING] Only {successful_operations} of {total_operations} operations were saved to database from file {file_id}")
             except Exception as commit_error:
                 print(f"[ERROR] Failed to commit operations to database: {commit_error}")
                 import traceback

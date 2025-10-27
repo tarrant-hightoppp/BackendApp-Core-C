@@ -10,6 +10,7 @@ class TemplateType(str, Enum):
     MICROINVEST = "MICROINVEST"  # Changed from MIKROINVEST for consistency
     BUSINESS_NAVIGATOR = "BusinessNavigator"
     UNIVERSUM = "UNIVERSUM"
+    INCOGNITA = "INCOGNITA"
 
 
 class TemplateDetector:
@@ -210,6 +211,11 @@ class TemplateDetector:
         if self._check_universum_pattern(df, headers):
             print("[DEBUG] Matched Universum pattern")
             return TemplateType.UNIVERSUM
+            
+        print("[DEBUG] Checking Incognita pattern")
+        if self._check_incognita_pattern(df, headers):
+            print("[DEBUG] Matched Incognita pattern")
+            return TemplateType.INCOGNITA
         
         print("[DEBUG] No template pattern matched")
         return None
@@ -695,6 +701,69 @@ class TemplateDetector:
             accounting_terms = ["дебит", "кредит", "сума", "документ", "операция", "счетоводна"]
             matches = sum(any(term in val for term in accounting_terms) for val in sample_data_str)
             return matches >= 3
+        return False
+        
+    def _check_incognita_pattern(self, df: pd.DataFrame, headers: List[str]) -> bool:
+        """
+        Check if the file matches the Incognita template pattern
+        
+        Incognita:
+        - Headers typically in row 3 with data starting from row 4
+        - Distinctive columns: "ДТ Сметка", "КТ Сметка", "A/A", "Дт Сметка описание",
+          "Кт Сметка описание", "Дата", "Ст-Ст в лева", "Док. Номер", "Предмет на доставка", "Контрагент"
+        
+        Note: Incognita format has headers in row 3, data from row 4
+        """
+        print("[DEBUG] Inside _check_incognita_pattern")
+        
+        # Incognita-specific keywords that should be present in column headers
+        expected_keywords = [
+            "дт сметка", "кт сметка", "a/a", "дт сметка описание", "кт сметка описание",
+            "дата", "ст-ст в лева", "док. номер", "предмет на доставка", "контрагент"
+        ]
+        
+        # First check for these keywords in the already-read headers (typically row 0)
+        keyword_matches = sum(
+            any(keyword in h for keyword in expected_keywords) for h in headers
+        )
+        if keyword_matches >= 3:
+            print(f"[DEBUG] Found {keyword_matches} Incognita keywords in first row headers")
+            return True
+            
+        # If not found in first row, check row 3 where Incognita typically has headers
+        if len(df) >= 4:  # Need at least 4 rows to check row 3 (0-indexed)
+            try:
+                # Get the header row (typically row 3 in Incognita)
+                header_row = df.iloc[2]  # 0-indexed, so row 3 is at index 2
+                header_values = [str(val).lower() for val in header_row.values if not pd.isna(val)]
+                
+                print(f"[DEBUG] Checking row 3 for Incognita headers: {header_values}")
+                
+                # Check if this looks like a header row with our expected keywords
+                incognita_matches = sum(
+                    any(keyword in val for keyword in expected_keywords) for val in header_values
+                )
+                
+                if incognita_matches >= 3:
+                    print(f"[DEBUG] Found {incognita_matches} Incognita keywords in row 3")
+                    return True
+            except Exception as e:
+                print(f"[DEBUG] Error checking row 3 for Incognita headers: {e}")
+        
+        # Additional check: look for distinctive patterns in the first several rows
+        # This handles cases where file structure might vary
+        for i in range(min(10, len(df))):
+            try:
+                row_values = [str(val).lower() for val in df.iloc[i].values if not pd.isna(val)]
+                row_text = " ".join(row_values)
+                
+                # Check for unique Incognita identifier phrases
+                if "дт сметка" in row_text and "кт сметка" in row_text and "предмет на доставка" in row_text:
+                    print(f"[DEBUG] Found distinctive Incognita pattern in row {i}")
+                    return True
+            except Exception as e:
+                print(f"[DEBUG] Error checking row {i} for Incognita patterns: {e}")
+                
         return False
     
     def _check_keywords_in_headers(self, headers: List[str], keywords: List[str], min_matches: int) -> bool:
