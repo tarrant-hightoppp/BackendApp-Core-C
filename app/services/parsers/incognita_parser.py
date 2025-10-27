@@ -39,7 +39,12 @@ class IncognitaParser(BaseExcelParser):
             
             # Detect columns based on Incognita headers
             column_map = self._detect_columns(df)
+            
+            # Ensure document number is always mapped to column L (index 11)
+            column_map['doc_number'] = 11
+            
             print(f"[DEBUG] Incognita parser - Detected column mapping: {column_map}")
+            print(f"[DEBUG] Incognita parser - Force mapped document number to column L (index 11)")
             
             # Skip any additional header rows if necessary
             data_start_row = self._find_data_start_row(df, column_map)
@@ -119,12 +124,17 @@ class IncognitaParser(BaseExcelParser):
                     operation_date = self.convert_to_date(raw_date_value)
                     
                     # Try to get document number from the doc_number column if available
-                    doc_num_from_column = self.clean_string(
-                        row.iloc[doc_num_idx] if doc_num_idx is not None and doc_num_idx < len(row) else None
-                    )
+                    doc_num_from_column = None
+                    if doc_num_idx is not None and doc_num_idx < len(row):
+                        raw_doc_num = row.iloc[doc_num_idx]
+                        if not pd.isna(raw_doc_num):
+                            # Convert to string and clean
+                            doc_num_from_column = str(raw_doc_num).strip()
+                            # Log the document number from the column
+                            if idx < 5:
+                                print(f"[DEBUG] Incognita parser - Document number from column: {doc_num_from_column}")
                     
-                    # Otherwise, extract document number from analytical descriptions
-                    # by taking the part before the first period
+                    # Always use the document number from dedicated column when available
                     document_number = doc_num_from_column
                     
                     # Process debit account and analytical info
@@ -142,8 +152,8 @@ class IncognitaParser(BaseExcelParser):
                         row.iloc[analytical_debit_idx] if analytical_debit_idx is not None and analytical_debit_idx < len(row) else None
                     )
                     
-                    # Extract document number from analytical_debit if available
-                    if not document_number and analytical_debit_raw and '.' in analytical_debit_raw:
+                    # Extract document number from analytical_debit only if not found in the dedicated column
+                    if document_number is None and analytical_debit_raw and '.' in analytical_debit_raw:
                         parts = analytical_debit_raw.split('.')
                         if parts and parts[0].strip():
                             document_number = parts[0].strip()
@@ -169,8 +179,8 @@ class IncognitaParser(BaseExcelParser):
                         row.iloc[analytical_credit_idx] if analytical_credit_idx is not None and analytical_credit_idx < len(row) else None
                     )
                     
-                    # Extract document number from analytical_credit if available and not already found
-                    if not document_number and analytical_credit_raw and '.' in analytical_credit_raw:
+                    # Extract document number from analytical_credit only if not found from other sources
+                    if document_number is None and analytical_credit_raw and '.' in analytical_credit_raw:
                         parts = analytical_credit_raw.split('.')
                         if parts and parts[0].strip():
                             document_number = parts[0].strip()
@@ -341,7 +351,12 @@ class IncognitaParser(BaseExcelParser):
             
             # Detect columns based on Incognita headers
             column_map = self._detect_columns(df)
+            
+            # Ensure document number is always mapped to column L (index 11)
+            column_map['doc_number'] = 11
+            
             print(f"[DEBUG] Incognita parser (memory) - Detected column mapping: {column_map}")
+            print(f"[DEBUG] Incognita parser (memory) - Force mapped document number to column L (index 11)")
             
             # Skip any additional header rows if necessary
             data_start_row = self._find_data_start_row(df, column_map)
@@ -421,12 +436,17 @@ class IncognitaParser(BaseExcelParser):
                     operation_date = self.convert_to_date(raw_date_value)
                     
                     # Try to get document number from the doc_number column if available
-                    doc_num_from_column = self.clean_string(
-                        row.iloc[doc_num_idx] if doc_num_idx is not None and doc_num_idx < len(row) else None
-                    )
+                    doc_num_from_column = None
+                    if doc_num_idx is not None and doc_num_idx < len(row):
+                        raw_doc_num = row.iloc[doc_num_idx]
+                        if not pd.isna(raw_doc_num):
+                            # Convert to string and clean
+                            doc_num_from_column = str(raw_doc_num).strip()
+                            # Log the document number from the column
+                            if idx < 5:
+                                print(f"[DEBUG] Incognita parser (memory) - Document number from column: {doc_num_from_column}")
                     
-                    # Otherwise, extract document number from analytical descriptions
-                    # by taking the part before the first period
+                    # Always use the document number from dedicated column when available
                     document_number = doc_num_from_column
                     
                     # Process debit account and analytical info
@@ -444,8 +464,8 @@ class IncognitaParser(BaseExcelParser):
                         row.iloc[analytical_debit_idx] if analytical_debit_idx is not None and analytical_debit_idx < len(row) else None
                     )
                     
-                    # Extract document number from analytical_debit if available
-                    if not document_number and analytical_debit_raw and '.' in analytical_debit_raw:
+                    # Extract document number from analytical_debit only if not found in the dedicated column
+                    if document_number is None and analytical_debit_raw and '.' in analytical_debit_raw:
                         parts = analytical_debit_raw.split('.')
                         if parts and parts[0].strip():
                             document_number = parts[0].strip()
@@ -471,8 +491,8 @@ class IncognitaParser(BaseExcelParser):
                         row.iloc[analytical_credit_idx] if analytical_credit_idx is not None and analytical_credit_idx < len(row) else None
                     )
                     
-                    # Extract document number from analytical_credit if available and not already found
-                    if not document_number and analytical_credit_raw and '.' in analytical_credit_raw:
+                    # Extract document number from analytical_credit only if not found from other sources
+                    if document_number is None and analytical_credit_raw and '.' in analytical_credit_raw:
                         parts = analytical_credit_raw.split('.')
                         if parts and parts[0].strip():
                             document_number = parts[0].strip()
@@ -773,9 +793,11 @@ class IncognitaParser(BaseExcelParser):
                     if column_map['analytical_credit'] is None:
                         column_map['analytical_credit'] = 5  # Кт Сметка описание is at index 5
                         print(f"[DEBUG] Incognita parser - Force mapped analytical credit to column index 5 (Кт Сметка описание)")
-                    if column_map['doc_number'] is None:
-                        column_map['doc_number'] = 11  # Док. Номер is at index 11
-                        print(f"[DEBUG] Incognita parser - Force mapped document number to column index 11 (Док. Номер)")
+            
+            # Always ensure document number column is mapped to index 11 for Incognita format
+            # This is a critical fix for the document number parsing issue
+            column_map['doc_number'] = 11  # Док. Номер is always at index 11
+            print(f"[DEBUG] Incognita parser - Force mapped document number to column index 11 (Док. Номер)")
             
             # Fallback: Check first row values for column headers if not found
             if column_map['debit'] is None or column_map['credit'] is None or column_map['analytical_debit'] is None or column_map['analytical_credit'] is None:
