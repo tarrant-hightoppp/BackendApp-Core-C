@@ -19,12 +19,16 @@ class ExcelTemplateWrapper:
         """Initialize the template wrapper service"""
         self.s3_service = S3Service()
     
+    # Round-robin values for control action column
+    CONTROL_ACTION_VALUES = ["кд1", "кд2", "кд6", "кд7"]
+
     def wrap_excel_with_template(self,
                                 excel_content: Union[BinaryIO, bytes],
                                 company_name: str = "Форт България ЕООД",
                                 year: str = None,
                                 audit_approach: str = "full",
-                                account_type: str = None) -> io.BytesIO:
+                                account_type: str = None,
+                                control_action_mode: str = "round_robin") -> io.BytesIO:
         """
         Wrap an Excel file with operations data in a predefined template
         
@@ -35,6 +39,9 @@ class ExcelTemplateWrapper:
             audit_approach: The audit approach to use (default: "statistical")
             account_type: The type of account being analyzed ("debit" or "credit")
                         This is used to determine which account number to display in the report header
+            control_action_mode: Mode for populating the control action column:
+                - "placeholder": writes a placeholder text
+                - "round_robin": cycles through кд1, кд2, кд6, кд7 (default)
             
         Returns:
             BytesIO object containing the wrapped Excel file
@@ -291,20 +298,23 @@ class ExcelTemplateWrapper:
                 template_sheet,
                 row_num,
                 12,
-                0.0,
-                alignment=Alignment(horizontal='right', vertical='center'),
-                number_format='#,##0.00'
+                "НЯМА",
+                alignment=Alignment(horizontal='center', vertical='center')
             )
             
             # Column 13: Установено контролно действие при одита
-            if "Установено контролно действие при одита" in row_data:
-                CellUtils.safe_set_cell_value(
-                    template_sheet,
-                    row_num,
-                    13,
-                    row_data["Установено контролно действие при одита"],
-                    alignment=Alignment(wrap_text=True, vertical='center')
-                )
+            if control_action_mode == "round_robin":
+                ca_value = self.CONTROL_ACTION_VALUES[row_count % len(self.CONTROL_ACTION_VALUES)]
+            else:
+                # placeholder mode
+                ca_value = str(" ")
+            CellUtils.safe_set_cell_value(
+                template_sheet,
+                row_num,
+                13,
+                ca_value,
+                alignment=Alignment(horizontal='center', vertical='center')
+            )
                 
             # Column 14: First Additional Deviation column
             if "Отклонение (забележка)" in row_data:
@@ -401,15 +411,14 @@ class ExcelTemplateWrapper:
                             number_format='#,##0.00'
                         )
                         
-                        # Set deviation to 0.0 as requested
+                        # Set deviation to "НЯМА" as requested
                         CellUtils.safe_set_cell_value(
                             template_sheet,
                             subtotal_row,
                             12,  # Column L in new structure
-                            0.0,
+                            "НЯМА",
                             font=Font(name='Calibri', size=11, bold=True),
-                            alignment=Alignment(horizontal='right', vertical='center'),
-                            number_format='#,##0.00'
+                            alignment=Alignment(horizontal='center', vertical='center')
                         )
                         
                         # Add the second deviation field for the subtotal row as well
@@ -500,7 +509,8 @@ class ExcelTemplateWrapper:
                              company_name: str = "Форт България ЕООД",
                              year: str = None,
                              audit_approach: str = "statistical",
-                             account_type: str = None) -> Optional[str]:
+                             account_type: str = None,
+                             control_action_mode: str = "round_robin") -> Optional[str]:
         """
         Download an Excel file from S3, wrap it with a template, and upload it back to S3
         
@@ -510,6 +520,7 @@ class ExcelTemplateWrapper:
             year: Year to include in the template
             audit_approach: The audit approach to use (default: "statistical")
             account_type: The type of account being analyzed ("debit" or "credit")
+            control_action_mode: Mode for control action column ("placeholder" or "round_robin")
             
         Returns:
             S3 key of the wrapped Excel file if successful, None otherwise
@@ -527,7 +538,8 @@ class ExcelTemplateWrapper:
                 company_name=company_name,
                 year=year,
                 audit_approach=audit_approach,
-                account_type=account_type
+                account_type=account_type,
+                control_action_mode=control_action_mode
             )
             
             # Generate a new S3 key for the wrapped file

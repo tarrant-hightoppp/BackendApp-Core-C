@@ -23,7 +23,7 @@ class AjurAuditProcessor:
         # Re-use the standard operation processor's functionality where needed
         self.operation_processor = AccountingOperationProcessor(db)
     
-    def process_audit(self, import_uuid: str, audit_approach: str = "full") -> Dict[str, Any]:
+    def process_audit(self, import_uuid: str, audit_approach: str = "full", control_action_mode: str = "round_robin") -> Dict[str, Any]:
         """
         Process all operations for a specific import and generate audit files grouped by
         Дт с/ка (debit account) and Кт с/ка (credit account) values
@@ -46,10 +46,10 @@ class AjurAuditProcessor:
             return {"success": False, "message": f"No operations found for import {import_uuid}"}
         
         # Process debit accounts (Дт с/ка)
-        debit_results = self._process_debit_accounts(operations, import_uuid, audit_approach)
+        debit_results = self._process_debit_accounts(operations, import_uuid, audit_approach, control_action_mode=control_action_mode)
         
         # Process credit accounts (Кт с/ка)
-        credit_results = self._process_credit_accounts(operations, import_uuid, audit_approach)
+        credit_results = self._process_credit_accounts(operations, import_uuid, audit_approach, control_action_mode=control_action_mode)
         
         return {
             "success": True,
@@ -97,7 +97,8 @@ class AjurAuditProcessor:
         return operations
     
     def _process_debit_accounts(self, operations: List[AccountingOperation],
-                               import_uuid: str, audit_approach: str = "full") -> List[Dict[str, Any]]:
+                               import_uuid: str, audit_approach: str = "full",
+                               control_action_mode: str = "round_robin") -> List[Dict[str, Any]]:
         """
         Process operations grouped by debit account (Дт с/ка)
         
@@ -141,7 +142,7 @@ class AjurAuditProcessor:
             
             # Generate and upload the account-specific Excel file
             print(f"[DEBUG] Generating Excel file for debit account {account} with {len(filtered_operations)} operations")
-            s3_key = self._generate_and_upload_file(filtered_operations, file_name, "debit", import_uuid, audit_approach)
+            s3_key = self._generate_and_upload_file(filtered_operations, file_name, "debit", import_uuid, audit_approach, control_action_mode=control_action_mode)
             
             if s3_key:
                 print(f"[INFO] Successfully uploaded file to S3: {s3_key}")
@@ -156,7 +157,8 @@ class AjurAuditProcessor:
         return results
     
     def _process_credit_accounts(self, operations: List[AccountingOperation],
-                                import_uuid: str, audit_approach: str = "full") -> List[Dict[str, Any]]:
+                                import_uuid: str, audit_approach: str = "full",
+                                control_action_mode: str = "round_robin") -> List[Dict[str, Any]]:
         """
         Process operations grouped by credit account (Кт с/ка)
         
@@ -200,7 +202,7 @@ class AjurAuditProcessor:
             # Generate and upload the account-specific Excel file
             # Include the full original account information in the debug log
             print(f"[DEBUG] Generating Excel file for credit account {account} with {len(filtered_operations)} operations")
-            s3_key = self._generate_and_upload_file(filtered_operations, file_name, "credit", import_uuid, audit_approach)
+            s3_key = self._generate_and_upload_file(filtered_operations, file_name, "credit", import_uuid, audit_approach, control_action_mode=control_action_mode)
             
             if s3_key:
                 print(f"[INFO] Successfully uploaded file to S3: {s3_key}")
@@ -403,7 +405,8 @@ class AjurAuditProcessor:
     
     def _generate_and_upload_file(self, operations: List[AccountingOperation],
                                   file_name: str, account_type: str, import_uuid: str,
-                                  audit_approach: str = "statistical") -> Optional[str]:
+                                  audit_approach: str = "statistical",
+                                  control_action_mode: str = "round_robin") -> Optional[str]:
         """
         Generate Excel file with operations and upload to S3
         
@@ -413,6 +416,7 @@ class AjurAuditProcessor:
             account_type: "debit" or "credit" to include in file metadata
             import_uuid: UUID of the import batch
             audit_approach: The audit approach to use (default: "statistical")
+            control_action_mode: Mode for control action column ("round_robin" or "placeholder")
             
         Returns:
             S3 key if successful, None otherwise
@@ -490,8 +494,8 @@ class AjurAuditProcessor:
                     # Always use the same amount from the database for the verified amount
                     self.operation_processor.COL_VERIFIED_AMOUNT: float(op.amount) if op.amount else 0.0,
                     # Set deviation to 0.0 as requested
-                    self.operation_processor.COL_DEVIATION: 0.0,
-                    self.operation_processor.COL_CONTROL_ACTION: op.control_action,
+                    self.operation_processor.COL_DEVIATION: "НЯМА",
+                    self.operation_processor.COL_CONTROL_ACTION: op.control_action or "",
                     self.operation_processor.COL_DEVIATION_NOTE: op.deviation_note,
                     # Enhanced information from credit account extraction
                     "partner_name": partner_name,
@@ -530,7 +534,8 @@ class AjurAuditProcessor:
                 company_name=company_name,
                 year=year,
                 account_type=account_type,
-                audit_approach=audit_approach
+                audit_approach=audit_approach,
+                control_action_mode=control_action_mode
             )
             
             # Upload to S3 with the import-specific folder structure

@@ -28,7 +28,9 @@ async def upload_file(
     file: UploadFile = File(..., description="Excel file to upload (.xls or .xlsx)"),
     import_uuid: str = None, description="Optional. If provided, the file will be part of this import batch. If omitted, a new import_uuid will be generated.",
     audit_approach: str = Query("statistical",
-                               description="Audit approach to use: 'full' (100% population), 'statistical' (80/20 rule), or 'selected' (selected objects)")
+                               description="Audit approach to use: 'full' (100% population), 'statistical' (80/20 rule), or 'selected' (selected objects)"),
+    control_action_mode: str = Query("round_robin",
+                                    description="Control action column mode: 'round_robin' (cycles кд1,кд2,кд6,кд7) or 'placeholder' (empty text)")
 ) -> Any:
     """
     Upload an Excel file for processing accounting operations.
@@ -138,7 +140,7 @@ async def upload_file(
                 # Trigger account processing for this import with the new session
                 print(f"[INFO] Triggering account processing for import {import_uuid}")
                 processor = AccountingOperationProcessor(new_db)
-                result = processor.process_import(import_uuid, audit_approach)
+                result = processor.process_import(import_uuid, audit_approach, control_action_mode=control_action_mode)
                 
                 if result["success"]:
                     print(f"[INFO] Account processing successful. Generated {result['debit_accounts_processed']} debit files and {result['credit_accounts_processed']} credit files.")
@@ -255,7 +257,7 @@ def process_file(
                     print(f"[INFO] Found {operation_count} operations for import {import_uuid}")
                 
                 processor = AccountingOperationProcessor(new_db)
-                result = processor.process_import(import_uuid)
+                result = processor.process_import(import_uuid, audit_approach, control_action_mode=control_action_mode)
                 
                 if result["success"]:
                     print(f"[INFO] Account processing successful. Generated {result['debit_accounts_processed']} debit files and {result['credit_accounts_processed']} credit files.")
@@ -509,7 +511,9 @@ async def upload_multiple_files(
     files: List[UploadFile] = File(..., description="Multiple files to upload (all will share the same import_uuid)"),
     import_uuid: str = None, description="Optional. If provided, all files will be part of this import batch. If omitted, a new import_uuid will be generated for all these files.",
     audit_approach: str = Query("statistical",
-                               description="Audit approach to use: 'full' (100% population), 'statistical' (80/20 rule), or 'selected' (selected objects)")
+                               description="Audit approach to use: 'full' (100% population), 'statistical' (80/20 rule), or 'selected' (selected objects)"),
+    control_action_mode: str = Query("round_robin",
+                                    description="Control action column mode: 'round_robin' (cycles кд1,кд2,кд6,кд7) or 'placeholder' (empty text)")
 ) -> Any:
     """
     Upload multiple Excel files for processing accounting operations.

@@ -36,7 +36,7 @@ class AccountingOperationProcessor:
         self.s3_service = S3Service()
         self.template_wrapper = ExcelTemplateWrapper()
     
-    def process_import(self, import_uuid: str, audit_approach: str = "statistical") -> Dict[str, Any]:
+    def process_import(self, import_uuid: str, audit_approach: str = "statistical", control_action_mode: str = "round_robin") -> Dict[str, Any]:
         """
         Process all operations for a specific import and generate account-specific files
         
@@ -46,6 +46,7 @@ class AccountingOperationProcessor:
                 - "full" for 100% population check
                 - "statistical" for statistical audit sampling (80/20 rule)
                 - "selected" for check of selected population objects
+            control_action_mode: Mode for control action column ("round_robin" or "placeholder")
             
         Returns:
             Dictionary with processing results and statistics
@@ -60,10 +61,10 @@ class AccountingOperationProcessor:
             return {"success": False, "message": f"No operations found for import {import_uuid}"}
         
         # Process debit accounts
-        debit_results = self._process_accounts(operations, "debit", import_uuid, audit_approach)
+        debit_results = self._process_accounts(operations, "debit", import_uuid, audit_approach, control_action_mode=control_action_mode)
         
         # Process credit accounts
-        credit_results = self._process_accounts(operations, "credit", import_uuid, audit_approach)
+        credit_results = self._process_accounts(operations, "credit", import_uuid, audit_approach, control_action_mode=control_action_mode)
         
         return {
             "success": True,
@@ -112,7 +113,8 @@ class AccountingOperationProcessor:
     
     def _process_accounts(self, operations: List[AccountingOperation],
                           account_type: str, import_uuid: str,
-                          audit_approach: str = "statistical") -> List[Dict[str, Any]]:
+                          audit_approach: str = "statistical",
+                          control_action_mode: str = "round_robin") -> List[Dict[str, Any]]:
         """
         Process operations for all accounts of a specific type (debit/credit)
         
@@ -124,6 +126,7 @@ class AccountingOperationProcessor:
                 - "full" for 100% population check
                 - "statistical" for statistical audit sampling (80/20 rule)
                 - "selected" for check of selected population objects
+            control_action_mode: Mode for control action column ("round_robin" or "placeholder")
             
         Returns:
             List of dictionaries with results for each account
@@ -198,7 +201,7 @@ class AccountingOperationProcessor:
             
             # Generate and upload the account-specific Excel file
             print(f"[DEBUG] Generating Excel file for {account_type} main account {main_account} with {len(filtered_operations)} operations")
-            s3_key = self._generate_and_upload_file(filtered_operations, file_name, account_type, import_uuid, audit_approach)
+            s3_key = self._generate_and_upload_file(filtered_operations, file_name, account_type, import_uuid, audit_approach, control_action_mode=control_action_mode)
             
             if s3_key:
                 print(f"[INFO] Successfully uploaded file to S3: {s3_key}")
@@ -364,7 +367,8 @@ class AccountingOperationProcessor:
     
     def _generate_and_upload_file(self, operations: List[AccountingOperation],
                                   file_name: str, account_type: str, import_uuid: str,
-                                  audit_approach: str = "statistical") -> Optional[str]:
+                                  audit_approach: str = "statistical",
+                                  control_action_mode: str = "round_robin") -> Optional[str]:
         """
         Generate Excel file with operations and upload to S3
         
@@ -374,6 +378,7 @@ class AccountingOperationProcessor:
             account_type: "debit" or "credit" to include in file metadata
             import_uuid: UUID of the import batch
             audit_approach: The audit approach to use (default: "statistical")
+            control_action_mode: Mode for control action column ("round_robin" or "placeholder")
             
         Returns:
             S3 key if successful, None otherwise
@@ -396,9 +401,9 @@ class AccountingOperationProcessor:
                     self.COL_DESCRIPTION: op.description,
                     # Always use the same amount from the database for the verified amount
                     self.COL_VERIFIED_AMOUNT: float(op.amount),
-                    # Set deviation to 0.0 as requested
-                    self.COL_DEVIATION: 0.0,
-                    self.COL_CONTROL_ACTION: op.control_action,
+                    # Set deviation to "НЯМА" as requested
+                    self.COL_DEVIATION: "НЯМА",
+                    self.COL_CONTROL_ACTION: op.control_action or "",
                     self.COL_DEVIATION_NOTE: op.deviation_note,
                     # Keep original fields for reference/compatibility
                     "partner_name": op.partner_name,
@@ -463,7 +468,8 @@ class AccountingOperationProcessor:
                 company_name=company_name,
                 year=year,
                 account_type=account_type,
-                audit_approach=audit_approach
+                audit_approach=audit_approach,
+                control_action_mode=control_action_mode
             )
             
             # Upload to S3 with the import-specific folder structure:

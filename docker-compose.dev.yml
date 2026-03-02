@@ -1,28 +1,28 @@
 version: '3.8'
 
 services:
-  # api:
-  #   build: .
-  #   container_name: accounting-api
-  #   ports:
-  #     - "8001:8000"
-  #   env_file:
-  #     - .env
-  #   environment:
-  #     - POSTGRES_SERVER=db
-  #     - POSTGRES_USER=${POSTGRES_USER:-postgres}
-  #     - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
-  #     - POSTGRES_DB=${POSTGRES_DB:-accounting}
-  #     - S3_ENDPOINT_URL=http://minio:9000
-  #   depends_on:
-  #       db:
-  #         condition: service_healthy
-  #       minio:
-  #         condition: service_started
-  #   networks:
-  #     accounting-network:
-  #       ipv4_address: 172.20.0.2
-  #   command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+  api:
+    build: .
+    container_name: accounting-api
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_SERVER=db
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-accounting}
+      - S3_ENDPOINT_URL=http://minio:9000
+    depends_on:
+        db:
+          condition: service_healthy
+        minio:
+          condition: service_started
+    networks:
+      accounting-network:
+        ipv4_address: 172.20.0.2
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   db:
     image: postgres:14-alpine
@@ -36,7 +36,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
       - POSTGRES_DB=${POSTGRES_DB:-accounting}
     ports:
-      - "5432:5432"
+      - "6300:5432"
     networks:
       accounting-network:
         ipv4_address: 172.20.0.3
