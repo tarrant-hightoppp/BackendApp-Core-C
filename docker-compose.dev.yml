@@ -36,7 +36,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
       - POSTGRES_DB=${POSTGRES_DB:-accounting}
     ports:
-      - "6300:5432"
+      - "5432:5432"
     networks:
       accounting-network:
         ipv4_address: 172.20.0.3
